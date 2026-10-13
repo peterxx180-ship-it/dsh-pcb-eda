@@ -19,13 +19,17 @@
     "publish:dry": "node scripts/publish.mjs --dry-run",
     "publish:local": "node scripts/publish.mjs",
     "launch-dsh": "node scripts/launch-dsh.mjs",
-    "update-bundled-plugins:kicad": "node scripts/update-bundled-plugins-kicad.mjs"
+    "update-bundled-plugins:kicad": "node scripts/update-bundled-plugins-kicad.mjs",
+    "check:local-kicad-plugins": "node packages/dsh-plugin-manager/scripts/check-local-kicad-plugins.mjs",
+    "test:kicad-image-policy": "node --test packages/dsh-tool-kicad-schematic-gen/test/image-policy.test.mjs"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
     "jsdom": "^26.0.0",
     "tsdown": "^0.22.14",
     "typescript": "^5.9.0",
-    "vitest": "^4.1.0"
+    "vitest": "^4.1.0",
+    "tsx": "^4.21.0",
+    "@types/react": "^18.3.31"
   }
 }

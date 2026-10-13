@@ -44,11 +44,58 @@
 'use strict';
 
 import { execSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync,readFileSync,writeFileSync,renameSync,copyFileSync } from 'node:fs';
+import {randomUUID} from 'node:crypto';
+import {fileURLToPath} from 'node:url';
 import path from 'node:path';
 import { dshPlugins } from './utils/packages.mjs';
 
 const PROFILE = 'web';
+const {join}=path;
+export const HOST_HELPER_SOURCE="/* Loaded by the installed HQ Edge host before it generates its overlay. */\nconst fs = require('node:fs');\nconst path = require('node:path');\nfunction resolveProfileOverrides(profileDir, plugins) {\n  const filename = path.join(profileDir, 'package.json');\n  if (!fs.existsSync(filename)) return new Map();\n  const manifest = JSON.parse(fs.readFileSync(filename, 'utf8'));\n  const overrides = new Map();\n  for (const plugin of plugins) {\n    const spec = manifest.dependencies?.[plugin.packageName];\n    if (typeof spec !== 'string' || !spec.startsWith('link:')) continue;\n    const directory = path.resolve(profileDir, spec.slice(5));\n    const pkg = JSON.parse(fs.readFileSync(path.join(directory, 'package.json'), 'utf8'));\n    if (pkg.name !== plugin.packageName || !pkg.dsh?.bundle?.patch ||\n        !fs.existsSync(path.join(directory, pkg.dsh.bundle.patch)) ||\n        !pkg.main || !fs.existsSync(path.join(directory, pkg.main))) {\n      throw new Error(`Invalid KiCad local plugin override: ${plugin.packageName} at ${directory}`);\n    }\n    overrides.set(plugin.packageName, {directory, enabled: (manifest.dsh?.profile?.bundles ?? []).includes(plugin.packageName)});\n  }\n  return overrides;\n}\nfunction overlayConfigPatches(plugins, overrides) {\n  let result = '';\n  for (const plugin of plugins) {\n    if (!overrides.get(plugin.packageName)?.enabled || !plugin.config) continue;\n    result += `- id: ${JSON.stringify(plugin.entryId)}\\n  config:\\n`;\n    for (const [key,value] of Object.entries(plugin.config)) result += `    ${key}: ${JSON.stringify(value)}\\n`;\n  }\n  return result;\n}\nmodule.exports = {resolveProfileOverrides, overlayConfigPatches};\n";
+export function switchSnapshot(profileDir){
+ const manifest=JSON.parse(readFileSync(join(profileDir,'package.json'),'utf8'))
+ const choices=Object.fromEntries(Object.keys(manifest.dependencies??{}).map(name=>[name,(manifest.dsh?.profile?.bundles??[]).includes(name)]))
+ try{
+  const policy=JSON.parse(readFileSync(join(profileDir,'kicad-plugin-state.json'),'utf8'))
+  if(policy.version!==1||!policy.enabled||typeof policy.enabled!=='object'||Object.values(policy.enabled).some(value=>typeof value!=='boolean'))throw new Error('Invalid plugin switch policy')
+  Object.assign(choices,policy.enabled)
+ }catch(error){if(error.code!=='ENOENT')throw error}
+ return choices
+}
+export function restoreSwitches(profileDir,choices){
+ const path=join(profileDir,'package.json'),manifest=JSON.parse(readFileSync(path,'utf8'))
+ const bundles=new Set(manifest.dsh?.profile?.bundles??[])
+ for(const [name,enabled] of Object.entries(choices)){
+  if(!Object.hasOwn(manifest.dependencies??{},name))continue
+  if(enabled)bundles.add(name);else bundles.delete(name)
+ }
+ manifest.dsh.profile.bundles=[...bundles]
+ const temp=path+'.'+randomUUID()+'.tmp';writeFileSync(temp,JSON.stringify(manifest,null,2)+'\n');renameSync(temp,path)
+}
+
+export function patchKicadHost(installRoot) {
+ const target=join(installRoot,'bin/hq-edge-server.cjs');
+ let source=readFileSync(target,'utf8');
+ const marker='// DSH_LOCAL_OVERRIDES_V1';
+ if(!source.includes(marker)) {
+  const old='const desiredOverlay = buildHqPluginOverlay(plugins, disabledIds);';
+  const link='path8.join(bundleDir, path8.basename(plugin.sourceDir))\n      );';
+  if(source.split(old).length!==2 || source.split(link).length!==2)throw new Error('Unsupported HQ Edge host layout; local override patch not applied');
+  source=source.replace(old,`${marker}
+    const overrideProfileDir = path8.join(dshHome, "profiles", "web");
+    const {resolveProfileOverrides, overlayConfigPatches} = require("./kicad-local-overrides.cjs");
+    const localOverrides = resolveProfileOverrides(overrideProfileDir, plugins);
+    const desiredOverlay = buildHqPluginOverlay(plugins.filter(p => !localOverrides.has(p.packageName)), disabledIds) + overlayConfigPatches(plugins, localOverrides);`);
+  source=source.replace(link,'localOverrides.get(plugin.packageName)?.directory ?? path8.join(bundleDir, path8.basename(plugin.sourceDir))\n      );');
+  const backup=target+'.before-local-overrides';
+  if(!existsSync(backup))copyFileSync(target,backup);
+  writeFileSync(target,source);
+ }
+ writeFileSync(join(installRoot,'bin/kicad-local-overrides.cjs'), HOST_HELPER_SOURCE);
+}
+
+
 
 /**
  * Plugins that must NOT be added to the kicad profile:
@@ -166,6 +213,8 @@ function main() {
   const dshCmd = locateDshCmd();
   console.log(`\n== Installed dsh: ${dshCmd} ==`);
   const resolved = assertTargetsKicadHome(dshCmd);
+  patchKicadHost(resolved.installRoot);
+  console.log('   Installed host now preserves explicit local overrides and avoids duplicate built-in entries.');
   console.log(`   kicad DSH home: ${resolved.dshHome}`);
   console.log(`   profile: ${resolved.profile} (dir: ${resolved.profileDir})\n`);
 
@@ -177,12 +226,20 @@ function main() {
     throw new Error('No local DSH plugins discovered under packages/.');
   }
   console.log(`== Updating ${plugins.length} local plugins into the kicad profile ==`);
-  for (const dir of plugins) {
+  const choices=switchSnapshot(resolved.profileDir);
+  try { for (const dir of plugins) {
     console.log(`\n--- ${path.basename(dir)} ---`);
     run(dshCmd, ['plugin', '--profile', PROFILE, 'add', dir]);
-  }
+  }} finally { restoreSwitches(resolved.profileDir,choices); }
 
-  console.log('\nDone. Restart DSH (or restart KiCad) to load the updated bundles.');
+  const installed=JSON.parse(readFileSync(path.join(resolved.profileDir,'package.json'),'utf8'));
+  for(const dir of plugins){
+    const pkg=JSON.parse(readFileSync(path.join(dir,'package.json'),'utf8'));
+    if(installed.dependencies?.[pkg.name]!==`link:${dir.replace(/\\/g,'/')}` && installed.dependencies?.[pkg.name]!==`link:${dir}`)
+      throw new Error(`Plugin link registration missing: ${pkg.name}`);
+    if(!existsSync(path.join(dir,pkg.dsh.bundle.patch)) || !existsSync(path.join(dir,pkg.main)))throw new Error(`Incomplete plugin build: ${pkg.name}`);
+  }
+  console.log('\nDone. Local links and bundle files verified. Restart KiCad (do not reset the agent) to load the updated host and plugins.');
 }
 
-main();
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();

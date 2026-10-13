@@ -1,5 +1,0 @@
-# DSH bundle patch: Huaqiu Sensors Analytics integration.
-- insert:
-    - id: huaqiu-analytics
-      name: '@huaqiu/dsh-analytics'
-      inject: ['webServer', 'tools']
