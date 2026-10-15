@@ -1,6 +1,6 @@
 /** One entry point combines independently authored modules into one editable sheet. */
 import { isAbsolute } from 'node:path';
-import { Schematic } from 'file:///D:/kicad/dsh-pcb-eda/packages/dsh-tool-kicad-schematic-gen/lib/builder.js';
+import { Schematic, templateDir, symbolLibrary } from '../runtime.mjs';
 import { parts } from './shared/parts.mjs';
 import { place as placeInput } from './modules/input.mjs';
 import { place as placeOutput } from './modules/output.mjs';
@@ -11,7 +11,7 @@ if (!outputDirectory || !isAbsolute(outputDirectory)) {
 }
 const sch = new Schematic({
   projectName: 'modular_demo', title: 'Modular script example', paper: 'A4',
-  templateDir: 'D:/kicad/dsh-pcb-eda/packages/dsh-tool-kicad-schematic-gen/skills/kicad-schematic-design/templates',
+  templateDir,
 });
 const layout = {
   input: { name: 'Input', description: 'Input resistor', origin: [25, 25], size: [80, 80] },
@@ -36,7 +36,7 @@ const b = sch.pin(output.ports.signal.reference, output.ports.signal.pin);
 sch.wire(a, b, [[110, a[1]], [110, b[1]]]);
 sch.label('SIGNAL', a);
 sch.replacePowerLabels({
-  libraryPath: 'D:/kicad/10.0.0/share/kicad/symbols/power.kicad_sym',
+  libraryPath: symbolLibrary('power'),
   nets: { '+3V3': 'power:+3V3', GND: 'power:GND' },
 });
 console.log(JSON.stringify(sch.save(outputDirectory)));

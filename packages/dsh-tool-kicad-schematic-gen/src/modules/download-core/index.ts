@@ -52,6 +52,7 @@ export function apply(ctx: Pick<Context, 'effect' | 'fs' | 'sandboxPolicy'> & {
           sourceUrl: { type: 'string' },
           archiveEntry: { type: 'string' },
           archiveEntries: { type: 'array', items: { type: 'string' } },
+          footprints:{type:'array',items:{type:'object',properties:{archiveEntry:{type:'string'},footprintPath:{type:'string'},footprintName:{type:'string'},sha256:{type:'string'}},required:['archiveEntry','footprintPath','footprintName','sha256']}},
           sha256: { type: 'string' },
           bytes: { type: 'integer' },
           status: { type: 'string', enum: ['created', 'existing'] },

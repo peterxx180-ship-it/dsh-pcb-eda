@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, readdir, rm, writeFile, symlink } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, rm, writeFile, symlink,rename } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join,basename,dirname } from 'node:path'
 import { test } from 'node:test'
 import { Context } from '@deepseek-ai/cordis'
 import LocalFileSystem from '@deepseek-ai/dsh-fs-local'
@@ -66,16 +66,32 @@ test('imports both libraries, preserves table entries, returns association and i
   await writeFile(join(root, 'fp-lib-table'), '(fp_lib_table (version 7) (lib (name "Other")(type "KiCad")(uri "Other.pretty")(options "")(descr "")))\n')
   const result = await run()
   assert.equal(result.hasSymbol, true); assert.equal(result.hasFootprint, true)
+  assert.equal(dirname(result.libraryPath),join(root,'libraries','symbols'))
+  assert.equal(dirname(dirname(result.footprintPath)),join(root,'libraries','footprints'))
   assert.equal(result.validation.pinPadMatch, 'number_sets_match')
   assert.equal(await readFile(result.footprintPath, 'utf8'), `${footprint}\n`)
   const table = await readFile(result.footprintTablePath, 'utf8')
-  assert.ok(table.includes('Other.pretty')); assert.ok(table.includes('${KIPRJMOD}/DSH_7189_Demo_8a2cc0673b1c.pretty'))
+  assert.ok(table.includes('Other.pretty')); assert.ok(table.includes('${KIPRJMOD}/libraries/footprints/DSH_7189_Demo_8a2cc0673b1c.pretty'))
   const sch = new Schematic({ projectName: 'paired', title: 'Paired', paper: 'A4', templateDir: join(process.cwd(), 'packages/dsh-tool-kicad-schematic-gen/skills/kicad-schematic-design/templates') })
   sch.addSymbol({ libraryPath: result.libraryPath, libId: result.libId, footprint: result.footprintId, reference: 'U1', at: [50, 50] })
   const saved = sch.save(root)
   assert.ok((await readFile(saved.schematicPath, 'utf8')).includes(`(property "Footprint" "${result.footprintId}"`))
   const second = await run()
   assert.equal(second.footprintLibrary, 'existing'); assert.equal(second.footprintTable, 'existing')
+}))
+
+test('existing root-level libraries are reused rather than duplicated after the layout change',async()=>fixture(async(root,run)=>{
+ const first=await run();
+ const symbol=join(root,basename(first.libraryPath)),footprintDir=join(root,basename(dirname(first.footprintPath)));
+ await rename(first.libraryPath,symbol);await rename(dirname(first.footprintPath),footprintDir);
+ for(const [file,prefix] of [[first.tablePath,'libraries/symbols/'],[first.footprintTablePath,'libraries/footprints/']] as const){
+  await writeFile(file,(await readFile(file,'utf8')).replace(prefix,''));
+ }
+ const second=await run();
+ assert.equal(second.libraryPath,symbol);assert.equal(dirname(second.footprintPath),footprintDir);
+ assert.equal(second.library,'existing');assert.equal(second.footprintLibrary,'existing');
+ assert.deepEqual(await readdir(join(root,'libraries','symbols')),[]);
+ assert.deepEqual(await readdir(join(root,'libraries','footprints')),[]);
 }))
 
 test('missing or invalid footprint and mismatching numbered pads write nothing', async () => fixture(async (root, run) => {

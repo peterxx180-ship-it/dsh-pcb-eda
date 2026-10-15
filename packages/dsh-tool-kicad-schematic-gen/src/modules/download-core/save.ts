@@ -1,5 +1,7 @@
 /** Save a downloaded schematic through DSH's workspace-scoped filesystem service. */
 import { isAbsolute, join } from 'node:path'
+import {createHash} from 'node:crypto'
+import {footprintModel} from '../../components/project-footprint.ts'
 import type { FileSystem } from '@deepseek-ai/dsh-fs'
 import { downloadSchematic, type DownloadOptions } from './download.ts'
 
@@ -22,6 +24,7 @@ export interface SavedSchematic {
   originalProjectSha256: string | null
   originalProjectBytes: number | null
   originalProjectStatus: 'created' | 'existing' | 'absent'
+  footprints:{archiveEntry:string;footprintPath:string;footprintName:string;sha256:string}[]
 }
 
 /** Keep the target inside an existing session directory; never overwrite different content. */
@@ -65,11 +68,27 @@ export async function downloadIntoWorkspace(
     throw new Error(`project path already exists with different content: ${projectTarget.displayPath}`)
   }
   signal.throwIfAborted()
+  const footprints=[];
+  // Flatten untrusted archive paths into deterministic safe filenames; preserve origin metadata.
+  for(const file of source.footprints??[]){
+    const model=footprintModel(file.text);
+    const filename=createHash('sha256').update(file.archiveEntry).digest('hex').slice(0,24)+'.kicad_mod';
+    const asset=await fs.resolve(join(directory.displayPath,`HQ_EDA_${moduleId}.footprints`,filename),{signal});
+    if(!fs.contains(directory,asset))throw new Error('Footprint asset escapes download directory');
+    const info=await fs.stat(asset,signal);
+    if(info&&(info.type!=='file'||await fs.readText(asset,signal)!==file.text))throw new Error('Module footprint asset already exists with different content');
+    footprints.push({archiveEntry:file.archiveEntry,footprintPath:asset.displayPath,footprintName:model.name,sha256:file.sha256});
+  }
   if (existing === undefined) await fs.writeText(target, source.text, { kind: 'createIfAbsent' }, signal, policy)
   if (source.project !== undefined && projectTarget !== undefined && existingProject === undefined) {
     await fs.writeText(projectTarget, source.project.text, { kind: 'createIfAbsent' }, signal, policy)
   }
+  for(let i=0;i<footprints.length;i++){
+    const asset=await fs.resolve(footprints[i]!.footprintPath,{signal});
+    if(!await fs.stat(asset,signal))await fs.writeText(asset,source.footprints![i]!.text,{kind:'createIfAbsent'},signal,policy);
+  }
   return {
+    footprints,
     moduleId,
     moduleName: source.moduleName,
     schematicPath: target.displayPath,

@@ -4,6 +4,7 @@ import type { SkillCandidate, SkillResourceBase } from '@deepseek-ai/dsh-skill'
 import { readFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
+import { getKiCadPaths } from './runtime-paths.ts'
 
 export const name = 'kicad-schematic-design-skill'
 export const inject = ['skills']
@@ -26,7 +27,7 @@ function parseSkill(raw: string): { description: string; content: string } {
 /** Register the bundled skill provider with disposal owned by this plugin.
  * @param ctx - skill registry and registration effect scope.
  */
-export function apply(ctx: Pick<Context, 'skills' | 'effect'>): void {
+export function apply(ctx: Pick<Context, 'skills' | 'effect'>, kicadCliPath?:string): void {
   const parsed = parseSkill(readFileSync(skillFile, 'utf8'))
   const resourceBase: SkillResourceBase = { kind: 'directory', path: directory }
   const candidate: SkillCandidate = {
@@ -44,6 +45,7 @@ export function apply(ctx: Pick<Context, 'skills' | 'effect'>): void {
     list: () => Promise.resolve([candidate]),
     async get(_candidate, options) {
       const loaded = parseSkill(await readFile(skillFile, { encoding: 'utf8', signal: options.signal }))
+      const paths=getKiCadPaths(kicadCliPath);
       return {
         name: skillName,
         description: loaded.description,
@@ -51,7 +53,7 @@ export function apply(ctx: Pick<Context, 'skills' | 'effect'>): void {
         provider: providerName,
         source: candidate.source,
         resourceBase,
-        content: loaded.content,
+        content: `${loaded.content}\n\n## 当前安装路径（运行时生成）\n\n项目脚本设置 DSH_SCHEMATIC_PLUGIN_DIR=${JSON.stringify(fileURLToPath(new URL('../', import.meta.url)))}。CLI=${JSON.stringify(paths.kicadCliPath)}。${paths.symbolDir ? `KICAD_SYMBOL_DIR=${JSON.stringify(paths.symbolDir)}。` : '未找到标准符号库；使用项目符号或配置 KICAD_SYMBOL_DIR。'}`,
       }
     },
   })))

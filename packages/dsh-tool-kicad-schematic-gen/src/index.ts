@@ -15,5 +15,5 @@ export function apply(ctx:Context, input:ConfigInput={}):void {
   registerComponents(ctx,config.components)
   registerModules(ctx,config.modules)
   registerSchematic(ctx,config.schematic)
-  registerSkills(ctx)
+  registerSkills(ctx,config.schematic.kicadCliPath)
 }

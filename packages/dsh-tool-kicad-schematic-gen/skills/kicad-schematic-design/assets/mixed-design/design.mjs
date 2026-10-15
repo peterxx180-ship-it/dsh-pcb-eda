@@ -1,7 +1,7 @@
 /** Reuse an inspected single-sheet module and add one independently scripted region. */
 import { readFileSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
-import { Schematic } from 'file:///D:/kicad/dsh-pcb-eda/packages/dsh-tool-kicad-schematic-gen/lib/builder.js';
+import { Schematic, templateDir, symbolLibrary } from '../runtime.mjs';
 import { place } from './modules/load.mjs';
 
 const [configPath, outputDirectory] = process.argv.slice(2);
@@ -10,7 +10,7 @@ if (!configPath || !outputDirectory || !isAbsolute(configPath) || !isAbsolute(ou
 }
 const spec = JSON.parse(readFileSync(configPath, 'utf8'));
 const sch = new Schematic({ projectName: spec.projectName, title: spec.title, paper: spec.paper,
-  templateDir: 'D:/kicad/dsh-pcb-eda/packages/dsh-tool-kicad-schematic-gen/skills/kicad-schematic-design/templates' });
+  templateDir });
 
 // Import before allocating new references; the returned target references are reserved.
 const imported = sch.importModule(spec.source);

@@ -65,8 +65,8 @@ function rootClose(text: string): number {
   throw new Error('sym-lib-table contains unbalanced or trailing content')
 }
 
-function updatedTable(text: string | null, nickname: string): string | null {
-  const entry = `  (lib (name "${nickname}")(type "KiCad")(uri "\${KIPRJMOD}/${nickname}.kicad_sym")(options "")(descr ""))`
+function updatedTable(text: string | null, nickname: string, uri: string): string | null {
+  const entry = `  (lib (name "${nickname}")(type "KiCad")(uri "${uri}")(options "")(descr ""))`
   if (text === null) return `(sym_lib_table\n  (version 7)\n${entry}\n)\n`
   const close = rootClose(text)
   if (text.includes(`(name "${nickname}")`)) {
@@ -145,7 +145,10 @@ export async function importSymbol(
     throw new Error('upstream Symbol name must be non-empty and must not contain a colon')
   }
   const nickname = libraryName(mfgId, mpn)
-  const library = await fs.resolve(join(project.displayPath, `${nickname}.kicad_sym`), { signal })
+  const legacy = await fs.resolve(join(project.displayPath, `${nickname}.kicad_sym`), { signal })
+  const legacyExists = await fs.stat(legacy, signal) !== undefined
+  const library = legacyExists ? legacy : await fs.resolve(join(project.displayPath, 'libraries', 'symbols', `${nickname}.kicad_sym`), { signal })
+  const uri = `\${KIPRJMOD}/${legacyExists ? '' : 'libraries/symbols/'}${nickname}.kicad_sym`
   const table = await fs.resolve(join(project.displayPath, 'sym-lib-table'), { signal })
   if (!fs.contains(project, library) || !fs.contains(project, table)) {
     throw new Error('project library targets must stay inside projectDir')
@@ -162,7 +165,7 @@ export async function importSymbol(
   const tableInfo = await fs.stat(table, signal)
   if (tableInfo !== undefined && tableInfo.type !== 'file') throw new Error(`sym-lib-table is not a file: ${table.displayPath}`)
   const tableText = tableInfo === undefined ? null : await fs.readText(table, signal)
-  const nextTable = updatedTable(tableText, nickname)
+  const nextTable = updatedTable(tableText, nickname, uri)
 
   signal.throwIfAborted()
   if (libraryInfo === undefined) await fs.writeText(library, normalizedText, { kind: 'createIfAbsent' }, signal, policy)

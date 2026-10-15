@@ -1,5 +1,6 @@
 import Schema from '@deepseek-ai/schemastery'
 import {fileURLToPath} from 'node:url'
+import {getKiCadPaths} from './runtime-paths.ts'
 import {Config as ComponentsConfig} from './components/config.ts'
 import {Config as ModulesConfig} from './modules/config.ts'
 import {Config as SchematicConfig} from './schematic/config.ts'
@@ -22,7 +23,7 @@ const defaults: Config = {
     download:{apiBaseUrl:'https://www.eda.cn',requestTimeoutMs:30000,maxDetailBytes:2000000,
       maxZipBytes:20000000,maxSchematicBytes:10000000,maxProjectBytes:10000000,maxArchiveEntries:512},
   },
-  schematic:{maxSchematicBytes:10000000,kicadCliPath:'D:/kicad/10.0.0/bin/kicad-cli.exe',
+  schematic:{maxSchematicBytes:10000000,kicadCliPath:'kicad-cli',
     previewDensity:288,previewMaxWidth:2400,previewMaxPages:4,previewPadding:32,previewTimeoutMs:30000,
     previewTrimThreshold:10,flatListLimit:120,
     flatTemplateDir:fileURLToPath(new URL('../skills/kicad-schematic-design/templates/',import.meta.url))},
@@ -45,6 +46,6 @@ export function resolveConfig(input: ConfigInput = {}): Config {
     components:{...defaults.components,...input.components},
     modules:{search:{...defaults.modules.search,...input.modules?.search},
       download:{...defaults.modules.download,...input.modules?.download}},
-    schematic:{...defaults.schematic,...input.schematic},
+    schematic:{...defaults.schematic,...input.schematic,kicadCliPath:getKiCadPaths(input.schematic?.kicadCliPath).kicadCliPath},
   })
 }

@@ -11,6 +11,6 @@ test('renamed plugin registers only the four downstream tools',()=>{
   maxTextChars:12000,maxImages:5,allowedPdfHosts:['file.elecfans.com','file1.elecfans.com'],
  }))
  assert.equal(name,'@local/dsh-tool-kicad-library')
- assert.deepEqual(tools.map(t=>t.name),['get_kicad_component_models','import_kicad_symbol','get_kicad_datasheet','import_kicad_component'])
+ assert.deepEqual(tools.map(t=>t.name),['get_kicad_component_models','import_kicad_symbol','get_kicad_datasheet','import_kicad_component','localize_kicad_module_footprints'])
  assert.ok(tools.every(t=>!t.description.includes('search_kicad_components')))
 })

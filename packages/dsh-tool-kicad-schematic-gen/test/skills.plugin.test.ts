@@ -19,4 +19,7 @@ test('migrated skill resolves resources and instructs the split component flow',
  assert.ok(!skill.content.includes('@local/dsh-tool-part-search'))
  await access(new URL('../skills/kicad-schematic-design/references/component-pcb.md',import.meta.url))
  assert.ok(!skill.content.includes('search_kicad_components'))
+ assert.match(skill.content,/已有 `get_eda_host_info` 返回值时复用/)
+ assert.match(skill.content,/正常生成、读取和渲染原理图不依赖 PCB IPC/)
+ assert.match(skill.content,/kicadCliPath/)
 })

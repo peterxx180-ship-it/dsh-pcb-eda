@@ -32,6 +32,7 @@ export interface DownloadedSchematic {
   bytes: number
   sha256: string
   project?: DownloadedProject
+  footprints?: {archiveEntry:string;text:string;sha256:string}[]
 }
 
 /** Reject invalid deployment settings before the plugin registers a tool. */
@@ -141,6 +142,7 @@ interface ExtractedArchive {
   archiveEntries: string[]
   schematic: { entry: string; bytes: Uint8Array }
   project?: { entry: string; bytes: Uint8Array }
+  footprints: {entry:string;bytes:Uint8Array}[]
 }
 
 function siblingProject(schematic: string, projects: string[]): string | undefined {
@@ -154,6 +156,8 @@ function extractArchive(zip: Uint8Array, options: DownloadOptions): ExtractedArc
   const archiveEntries: string[] = []
   const schematicEntries: string[] = []
   const projectEntries: string[] = []
+  const footprintEntries:string[]=[]
+  let footprintBytes=0
   unzipSync(zip, { filter: file => {
     if (file.name.endsWith('/')) return false
     if (file.name.length > 1024 || /[\u0000-\u001f\u007f]/u.test(file.name)) {
@@ -162,6 +166,13 @@ function extractArchive(zip: Uint8Array, options: DownloadOptions): ExtractedArc
     archiveEntries.push(file.name)
     if (archiveEntries.length > options.maxArchiveEntries) {
       throw new Error('module ZIP exceeds maxArchiveEntries')
+    }
+    if(/\.kicad_mod$/iu.test(file.name)){
+      if(file.name.includes('\\')||file.name.startsWith('/')||file.name.split('/').some(p=>p==='..'||p==='.'||p.includes(':')))throw new Error('Unsafe footprint archive path');
+      footprintBytes+=file.originalSize;
+      if(file.originalSize>options.maxSchematicBytes||footprintBytes>options.maxZipBytes)throw new Error('Module footprints exceed configured archive limits');
+      if(footprintEntries.includes(file.name))throw new Error('Duplicate footprint archive entry');
+      footprintEntries.push(file.name);return false;
     }
     if (/\.kicad_sch$/iu.test(file.name)) {
       if (file.originalSize > options.maxSchematicBytes) throw new Error('KiCad schematic exceeds maxSchematicBytes')
@@ -179,8 +190,14 @@ function extractArchive(zip: Uint8Array, options: DownloadOptions): ExtractedArc
   const entry = schematicEntries[0]
   if (entry === undefined) throw new Error('module ZIP contains no KiCad schematic')
   const projectEntry = siblingProject(entry, projectEntries)
-  const selectedEntries = new Set(projectEntry === undefined ? [entry] : [entry, projectEntry])
+  const selectedEntries = new Set([entry,...(projectEntry?[projectEntry]:[]),...footprintEntries])
   const files = unzipSync(zip, { filter: file => selectedEntries.has(file.name) })
+  let actualFootprintBytes=0;
+  for(const entry of footprintEntries){
+    const asset=files[entry];if(!asset||asset.byteLength>options.maxSchematicBytes)throw new Error('Footprint entry exceeds configured size');
+    actualFootprintBytes+=asset.byteLength;
+    if(actualFootprintBytes>options.maxZipBytes)throw new Error('Extracted footprints exceed configured limit');
+  }
   const bytes = files[entry]
   if (bytes === undefined) throw new Error('module ZIP contains no KiCad schematic')
   if (bytes.byteLength > options.maxSchematicBytes) throw new Error('KiCad schematic exceeds maxSchematicBytes')
@@ -188,7 +205,7 @@ function extractArchive(zip: Uint8Array, options: DownloadOptions): ExtractedArc
   if (projectBytes !== undefined && projectBytes.byteLength > options.maxProjectBytes) {
     throw new Error('KiCad project exceeds maxProjectBytes')
   }
-  const result = { archiveEntries: archiveEntries.sort(), schematic: { entry, bytes } }
+  const result = { archiveEntries: archiveEntries.sort(), schematic: { entry, bytes },footprints:footprintEntries.map(entry=>({entry,bytes:files[entry]!})) }
   return projectEntry === undefined || projectBytes === undefined
     ? result : { ...result, project: { entry: projectEntry, bytes: projectBytes } }
 }
@@ -236,6 +253,7 @@ export async function downloadSchematic(
     text,
     bytes: archive.schematic.bytes.byteLength,
     sha256: createHash('sha256').update(archive.schematic.bytes).digest('hex'),
+    footprints:archive.footprints.map(file=>({archiveEntry:file.entry,text:new TextDecoder('utf-8',{fatal:true}).decode(file.bytes),sha256:createHash('sha256').update(file.bytes).digest('hex')})),
   }
   return project === undefined ? result : { ...result, project }
 }

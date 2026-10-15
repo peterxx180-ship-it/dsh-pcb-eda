@@ -2,6 +2,7 @@
 import type * as ReactTypes from 'react'
 import {parseCard} from './overview-result.ts'
 import {placementHost,placeOverview,type PlacementHost} from './place.ts'
+import {supersededOverviews} from './latest-overview.ts'
 
 interface ClientContext {
  get?:(name:string)=>PlacementHost|undefined
@@ -12,7 +13,12 @@ interface ClientContext {
 function keepDeliveryVisible(){
  if(typeof document==='undefined'||typeof MutationObserver==='undefined')return()=>{}
  let frame=0,disposed=false
- const reveal=()=>{frame=0;if(disposed)return;for(const card of document.querySelectorAll('.dsh-local-overview')){
+ const reveal=()=>{frame=0;if(disposed)return;
+ const cards=Array.from(document.querySelectorAll<HTMLElement>('.dsh-local-overview'));
+ const hidden=supersededOverviews(cards.map(card=>({session:card.dataset.overviewSession??'',project:card.dataset.overviewProject??'',createdAt:Number(card.dataset.overviewCreated??0)})));
+ for(const [index,card] of cards.entries()){
+  if(card.hidden!==hidden[index])card.hidden=hidden[index]!;
+  if(hidden[index])continue;
   let parent=card.parentElement
   while(parent){if(parent.hasAttribute('data-turn-process-hidden'))parent.removeAttribute('hidden');parent=parent.parentElement}
  }}
@@ -24,11 +30,12 @@ const loader=(window as unknown as {__ModuleLoader__:{load:(options:unknown)=>vo
 loader.load({id:'@local/dsh-tool-kicad-schematic-gen',factory:(require:(name:string)=>typeof ReactTypes)=>{
  const React=require('react'),{createElement:h,useState,useEffect}=React
  let getHost:(()=>PlacementHost|undefined)|undefined
- function Card(props:{block?:unknown}){
+ function Card(props:{block?:unknown;sessionId?:string}){
   const state=parseCard(props.block),result=state.result
   const [page,setPage]=useState(0),[zoom,setZoom]=useState(1),[message,setMessage]=useState(''),[busy,setBusy]=useState(false)
   useEffect(()=>{setPage(0);setZoom(1);setMessage('')},[result?.downloadUrl])
-  if(state.kind!=='delivery'||!result)return h('div',{role:state.kind==='error'?'alert':'status',style:{padding:12}},state.kind==='running'?'正在渲染原理图…':state.message)
+  if(state.kind==='review'||state.kind==='running'||(state.kind==='error'&&!state.formal))return null
+  if(state.kind!=='delivery'||!result)return h('div',{role:'alert',style:{padding:12}},state.message)
   const current=result.pages[page]??result.pages[0]!
   const host=placementHost(getHost)
   async function place(){
@@ -48,7 +55,7 @@ loader.load({id:'@local/dsh-tool-kicad-schematic-gen',factory:(require:(name:str
    }catch(error){setMessage(error instanceof Error?error.message:String(error))}finally{setBusy(false)}
   }
   const buttonStyle={padding:'6px 12px',border:'1px solid #aaa',borderRadius:6,background:'transparent',color:'inherit',cursor:'pointer'}
-  return h('section',{className:'dsh-local-overview','aria-label':'原理图概览',style:{border:'1px solid #aaa',borderRadius:10,padding:16,margin:'8px 0',color:'inherit'}},
+  return h('section',{className:'dsh-local-overview','data-overview-session':props.sessionId,'data-overview-project':result.projectKey,'data-overview-created':result.createdAt,'aria-label':'原理图概览',style:{border:'1px solid #aaa',borderRadius:10,padding:16,margin:'8px 0',color:'inherit'}},
    h('div',{style:{display:'flex',justifyContent:'space-between',gap:12}},h('strong',null,'原理图概览'),h('span',null,result.status==='ok'?'● 已生成':'预览部分完成')),
    h('div',{style:{margin:'10px 0',fontSize:13}},`${result.title} · ${result.pages.length} 页预览 · ${(result.size/1024).toFixed(1)} KB`),
    h('div',{style:{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap',marginBottom:8}},

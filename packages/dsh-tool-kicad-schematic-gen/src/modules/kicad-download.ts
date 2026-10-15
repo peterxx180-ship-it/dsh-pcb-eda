@@ -71,6 +71,7 @@ export function adaptTool(tool: ToolDefinition, hqEdge: HqEdge | (() => HqEdge |
           sourceProjectPath: { oneOf: [{ type: 'string' }, { type: 'null' }] },
           schematicStatus: { type: 'string', enum: ['created', 'existing'] },
           sourceProjectStatus: { type: 'string', enum: ['created', 'existing', 'absent'] },
+          footprints:{type:'array',items:{type:'object',properties:{archiveEntry:{type:'string'},footprintPath:{type:'string'},footprintName:{type:'string'},sha256:{type:'string'}},required:['archiveEntry','footprintPath','footprintName','sha256']}},
         },
         required: ['moduleId', 'moduleName', 'schematicPath', 'sourceProjectPath', 'schematicStatus', 'sourceProjectStatus'],
       },
@@ -95,6 +96,7 @@ export function adaptTool(tool: ToolDefinition, hqEdge: HqEdge | (() => HqEdge |
           sourceProjectPath: result.originalProjectPath,
           schematicStatus: result.status,
           sourceProjectStatus: result.originalProjectStatus,
+          footprints: result.footprints,
         }
       } finally {
         unsubscribe()

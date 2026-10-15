@@ -7,15 +7,20 @@
 下面是小型电路的接口示例，实际设计按真实器件、连线及可用空间规划位置。复用模块也使用同一流程：importModule 和新增标签全部完成后查询 catalog，再转换、保存。
 
 ```js
-import { Schematic } from 'file:///D:/kicad/dsh-pcb-eda/packages/dsh-tool-kicad-schematic-gen/lib/builder.js';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+const pluginDir = process.env.DSH_SCHEMATIC_PLUGIN_DIR;
+if (!pluginDir) throw new Error('Set DSH_SCHEMATIC_PLUGIN_DIR using the current skill installation path.');
+const { Schematic, templateDir, symbolLibrary } = await import(pathToFileURL(join(pluginDir,
+  'skills/kicad-schematic-design/assets/runtime.mjs')).href);
 const powerNets = { GND: 'power:GND', '+3V3': 'power:+3V3' };
 const sch = new Schematic({
   projectName: 'power_demo', title: 'Power symbols', paper: 'A4',
-  templateDir: 'D:/kicad/dsh-pcb-eda/packages/dsh-tool-kicad-schematic-gen/skills/kicad-schematic-design/templates',
+  templateDir,
   requiredPowerSymbols: powerNets,
 });
 sch.addSymbol({
-  libraryPath: 'D:/kicad/10.0.0/share/kicad/symbols/Device.kicad_sym',
+  libraryPath: symbolLibrary('Device'),
   libId: 'Device:R', reference: 'R1', value: '10k', at: [50, 50],
 });
 const topPin = sch.pin('R1', '1');
@@ -27,7 +32,7 @@ sch.wire(bottomPin, ground);
 sch.label('+3V3', supply);
 sch.label('GND', ground);
 const spec = {
-  libraryPath: 'D:/kicad/10.0.0/share/kicad/symbols/power.kicad_sym',
+  libraryPath: symbolLibrary('power'),
   nets: powerNets,
 };
 const plan = sch.planPowerPlacements(spec);

@@ -11,6 +11,7 @@ import { getComponentModels } from './models.ts'
 
 import { partIdentity } from './identity.ts'
 import { importComponent } from './import-component.ts'
+import {inspectModuleFootprints,localizeFootprints,type FootprintAssignment} from './module-footprints.ts'
 
 import type { Config } from './config.ts'
 
@@ -262,5 +263,25 @@ export function createKicadLibraryTools(ctx: Context, config: Config): ToolDefin
     },
     presentCall: args => ({ card: 'generic', title: 'Import KiCad component and footprint', kind: 'edit', rawInput: args }),
   }
-  return [modelsTool, importTool, datasheetTool, componentTool]
+  const moduleFootprints:ToolDefinition={
+   name:'localize_kicad_module_footprints',
+   description:'List physical instances (including DNP), check_mapping to verify prepared libraries against an unchanged source, check to audit actual Footprint fields in a generated schematic, or import selected footprints. Import does not update the source unless targetPath is supplied. Use archive footprintPath first; otherwise BOTH exact manufacturer_id and mpn from search are mandatory. Downloads run at concurrency 4 with a bounded 15-minute success cache; validation completes before sequential project writes. Number matching is not package/electrical validation.',
+   parameters:{type:'object',additionalProperties:false,properties:{
+    action:{type:'string',enum:['list','check_mapping','check','import']},schematicPath:{type:'string'},projectDir:{type:'string'},targetPath:{type:'string',description:'Optional explicitly selected workspace schematic copy to update; omit to keep source module immutable.'},
+    assignments:{type:'array',maxItems:200,items:{type:'object',additionalProperties:false,properties:{references:{type:'array',items:{type:'string'},minItems:1},manufacturer_id:{type:'string'},mpn:{type:'string'},footprintPath:{type:'string'},allowedExtraPads:{type:'array',items:{type:'string'}},extraPadReason:{type:'string'}},required:['references']}},
+   },required:['action','schematicPath']},
+   output:{schema:{type:'object',additionalProperties:true},render:(_args,result)=>[{type:'text',text:JSON.stringify(result)}]},
+   async execute(args,exec){
+    const a=args as {action:string;schematicPath:string;projectDir?:string;targetPath?:string;assignments?:FootprintAssignment[]};
+    if(!a||typeof a.schematicPath!=='string'||!['list','check_mapping','check','import'].includes(a.action))throw new Error('Use list, check_mapping, check or import with schematicPath');
+    const agent=exec.agent,cwd=agent?.session.header.cwd;if(!agent||!cwd)throw new Error('A session workspace is required');
+    if(a.action==='list')return inspectModuleFootprints(a.schematicPath,undefined,cwd,ctx.fs,exec.signal);
+    if(typeof a.projectDir!=='string'||!a.projectDir.trim())throw new Error('projectDir required for check/import');
+    if(a.action==='check'||a.action==='check_mapping')return inspectModuleFootprints(a.schematicPath,a.projectDir,cwd,ctx.fs,exec.signal,a.action==='check_mapping');
+    if(!Array.isArray(a.assignments)||!a.assignments.length||a.assignments.length>200)throw new Error('Import requires 1–200 explicit assignments');
+    return localizeFootprints({...a,projectDir:a.projectDir,assignments:a.assignments},cwd,config,ctx.fs,ctx.sandboxPolicy.resolve({session:agent.session}),exec.signal);
+   },
+   presentCall:args=>({card:'generic',title:'Localize module footprints',kind:(args as {action?:string})?.action==='import'?'edit':'read',rawInput:args}),
+  };
+  return [modelsTool, importTool, datasheetTool, componentTool,moduleFootprints]
 }

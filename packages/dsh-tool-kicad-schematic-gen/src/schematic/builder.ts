@@ -1,5 +1,5 @@
 /** Script API for model-planned single-sheet circuits; no automatic topology or routing. */
-import { randomUUID } from 'node:crypto'
+import { randomUUID,createHash } from 'node:crypto'
 import { readFileSync, mkdirSync, writeFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { children, parse, value, quote, applyEdits, type Form } from './sexpr.ts'
@@ -8,6 +8,7 @@ import { prepareFlatImport, type FlatImportSpec, type FlatImportResult } from '.
 import { flatTextSize } from './flat-layout.ts'
 import { normalizeCommonUnits } from './symbol-units.ts'
 import { planPowerLabels, type PowerPlanningOptions, type PowerPlacementPlan, type PowerGeometry } from './power-layout.ts'
+import {assignFootprintText} from './footprint-links.ts'
 export type { PowerPlanningOptions, PowerPlacementPlan } from './power-layout.ts'
 
 /** Explicit instance placement in millimetres; library files must be trusted project inputs. */
@@ -256,14 +257,31 @@ export class Schematic {
       ${this.instances.join('\n')} ${this.graphics.join('\n')}
       (sheet_instances (path "/" (page "1"))))\n`
   }
+  /** Persist source-reference mappings in scripts after importModule returns final references. */
+  assignFootprints(mappings:Record<string,string>):void {
+    const patched=assignFootprintText(this.source(),mappings);
+    const instances=children(parse(patched),'symbol').map(form=>patched.slice(form.start,form.end));
+    this.instances.splice(0,this.instances.length,...instances);
+  }
   /** Merge an existing single-sheet circuit, isolating private nets and renumbering instances.
    * @param spec Source path, unique module name, global translation and explicit shared nets.
    * @returns Reference map, translated label anchors, net names and object UUIDs for frames.
    */
-  importModule(spec: FlatImportSpec & { sourcePath: string }): FlatImportResult {
+  importModule(spec: FlatImportSpec & { sourcePath: string;footprintMappingPath?:string }): FlatImportResult {
     if (this.importedModules.has(spec.name)) throw new Error(`duplicate imported module: ${spec.name}`)
     const used = new Set([...this.references.keys()].map(key => key.slice(0, key.lastIndexOf(':'))))
-    const prepared = prepareFlatImport(readFileSync(spec.sourcePath, 'utf8'), spec, this.options.projectName, this.rootId, used)
+    const sourceText=readFileSync(spec.sourcePath,'utf8');
+    const prepared = prepareFlatImport(sourceText, spec, this.options.projectName, this.rootId, used)
+    const footprints:Record<string,string>={};
+    if(spec.footprintMappingPath){
+      const mapping=JSON.parse(readFileSync(spec.footprintMappingPath,'utf8'));
+      if(mapping.version!==1||mapping.sourceHash!==createHash('sha256').update(sourceText).digest('hex')||!mapping.mappings||typeof mapping.mappings!=='object'||Array.isArray(mapping.mappings))throw new Error('Footprint mapping does not match current module source; localize it again');
+      for(const [ref,id] of Object.entries(mapping.mappings)){
+        const target=prepared.result.references[ref];
+        if(!target||typeof id!=='string'||!/^[^:\r\n]+:[^:\r\n]+$/.test(id))throw new Error(`Invalid/stale module footprint mapping: ${ref}`);
+        footprints[target]=id;
+      }
+    }
     for (const [id] of prepared.definitions) if (this.definitions.has(id)) throw new Error(`imported cache already exists: ${id}`)
     for (const [id, text] of prepared.definitions) this.definitions.set(id, text)
     for (const instance of prepared.instances) {
@@ -274,6 +292,7 @@ export class Schematic {
     for (const uuid of prepared.result.objectUuids) this.objectModules.set(uuid, spec.name)
     this.placedPins = undefined
     this.importedModules.add(spec.name)
+    if(Object.keys(footprints).length)this.assignFootprints(footprints);
     return prepared.result
   }
   /** Place a symbol using its actual library definition, expanding simple inheritance.

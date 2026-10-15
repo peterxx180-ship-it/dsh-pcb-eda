@@ -1,19 +1,47 @@
 """Deploy a reversible request-only patch to the installed KiCad runtime."""
 from pathlib import Path
-import json,shutil,datetime,sys,yaml
+import json,shutil,datetime,sys,yaml,os,argparse,subprocess
 
 root=Path(__file__).resolve().parents[3]
-runtime=Path('D:/kicad/10.0.0/bin/edge-headless')
-settings=Path('C:/Users/msi/.hq-edge/1.8.12/dsh-home/kicad/settings.yaml')
+parser=argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--runtime',help='Override the installed edge-headless directory')
+parser.add_argument('--settings',help='Override the active KiCad settings.yaml')
+parser.add_argument('--dsh-cmd',help='Override the installed KiCad dsh launcher')
+parser.add_argument('--restore',action='store_true')
+parser.add_argument('--check-paths',action='store_true',help='Print discovered paths without modifying files')
+args=parser.parse_args()
+manifest=root/'.smoke/image-policy-backup.json'
+if args.restore:
+    records=json.loads(manifest.read_text(encoding='utf-8'))
+    for record in records:shutil.copyfile(record['backup'],record['target'])
+    print('Restored runtime files and settings. Restart KiCad.');sys.exit(0)
+paths={}
+if not (args.runtime and args.settings):
+    candidates=[args.dsh_cmd,os.environ.get('HQ_KICAD_DSH_CMD')]
+    for key in ('CommonProgramW6432','CommonProgramFiles'):
+        if os.environ.get(key):candidates.append(str(Path(os.environ[key])/'KiCad/bin/dsh.cmd'))
+    candidates.append(shutil.which('dsh'))
+    launcher=next((item for item in candidates if item and Path(item).is_file()),None)
+    if not launcher:parser.error('KiCad dsh launcher not found; supply --dsh-cmd or both --runtime and --settings')
+    env={**os.environ,'HQ_TARGET_HOST':'kicad'};env.pop('DSH_HOME',None)
+    command=[launcher,'--hq-paths']
+    result=subprocess.run(subprocess.list2cmdline(command) if os.name=='nt' else command,
+                          shell=os.name=='nt',env=env,capture_output=True,text=True,check=True)
+    paths=json.loads(result.stdout)
+    if not str(paths.get('dshHome','')).replace('\\','/').endswith('/dsh-home/kicad'):
+        parser.error('Launcher did not resolve the KiCad DSH home')
+runtime=Path(args.runtime or paths['installRoot']).resolve()
+settings=Path(args.settings or str(Path(paths['dshHome'])/'settings.yaml')).resolve()
+if args.check_paths:
+    print(json.dumps({'runtime':str(runtime),'settings':str(settings)},ensure_ascii=False));sys.exit(0)
 adapter=runtime/'dsh/node_modules/@deepseek-ai/dsh-llm-pi-ai/lib/index.js'
 request=runtime/'dsh/node_modules/@earendil-works/pi-ai/dist/api/openai-responses.js'
 shared=runtime/'dsh/node_modules/@earendil-works/pi-ai/dist/api/openai-responses-shared.js'
 helper=runtime/'bin/kicad-image-policy.mjs'
-manifest=root/'.smoke/image-policy-backup.json'
-if '--restore' in sys.argv:
+if manifest.exists():
     records=json.loads(manifest.read_text(encoding='utf-8'))
-    for record in records:shutil.copyfile(record['backup'],record['target'])
-    print('Restored runtime files and settings. Restart KiCad.');sys.exit(0)
+    if {str(Path(record['target']).resolve()) for record in records}!={str(p.resolve()) for p in [adapter,request,shared,settings]}:
+        parser.error('Existing backup belongs to another runtime or profile; preserve/archive it before deploying to this installation')
 sources=[adapter,request,shared,settings]
 if not manifest.exists():
     directory=root/'.smoke'/('image-policy-backup-'+datetime.datetime.now().strftime('%Y%m%d-%H%M%S'))

@@ -2,6 +2,3 @@
     - id: dsh-plugin-manager
       name: '@local/dsh-plugin-manager'
       inject: ['connection', 'loader']
-      config:
-        pluginsDir: 'D:/kicad/dsh-pcb-eda/packages'
-        dshCliPath: 'D:/kicad/10.0.0/bin/edge-headless/bin/dsh-cli.cjs'

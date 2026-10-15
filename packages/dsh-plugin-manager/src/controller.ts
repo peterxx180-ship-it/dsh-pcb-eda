@@ -3,7 +3,7 @@ import {readFile,writeFile,rename} from 'node:fs/promises'
 import {join} from 'node:path'
 import {randomUUID} from 'node:crypto'
 import {catalog,MANAGER_NAME,type LocalPlugin} from './state.ts'
-import type {Loader,LoaderEntry} from './builtins.ts'
+import type {Loader,LoaderEntry} from './loader.ts'
 
 export interface PluginRow extends LocalPlugin { active:boolean; restartRequired:boolean }
 export interface SwitchPolicy {version:1;enabled:Record<string,boolean>}

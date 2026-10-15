@@ -1,7 +1,7 @@
 /** HTTP settings endpoints for installed KiCad plugins. */
-import type { Loader } from './builtins.ts'
-/** Paths supplied by the installed profile. */
-export interface Config { pluginsDir: string; dshCliPath: string }
+import type { Loader } from './loader.ts'
+import { resolvePaths, assertCliAvailable, type Config } from './paths.ts'
+export type { Config } from './paths.ts'
 /** Services used from the installed KiCad DSH runtime. */
 export interface ManagerContext {
   loader: Loader
@@ -13,8 +13,7 @@ export interface ManagerContext {
     fetch(request: Request): Promise<Response>
   }): () => void } }
 }
-import { join, isAbsolute } from 'node:path'
-import { existsSync } from 'node:fs'
+import { join } from 'node:path'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { fileURLToPath } from 'node:url'
@@ -33,17 +32,13 @@ function send(status: number, data: unknown): Response {
  * @param ctx - installed runtime services.
  * @param config - local catalog and bundled CLI paths.
  */
-export function apply(ctx: ManagerContext, config: Config): void {
-  if (typeof config?.pluginsDir !== 'string' || !isAbsolute(config.pluginsDir)) {
-    throw new Error('dsh-plugin-manager: pluginsDir must be absolute')
-  }
-  if (typeof config.dshCliPath !== 'string' || !isAbsolute(config.dshCliPath) || !existsSync(config.dshCliPath)) {
-    throw new Error('dsh-plugin-manager: dshCliPath must name the bundled CLI')
-  }
+export function apply(ctx: ManagerContext, config: Config = {}): void {
+  const paths = resolvePaths(config, import.meta.url)
   if (!process.env.DSH_HOME) throw new Error('dsh-plugin-manager: DSH_HOME is required')
   const profileDir = join(process.env.DSH_HOME, 'profiles', 'web')
-  const controller = new PluginController(ctx.loader,config.pluginsDir,profileDir,async folder=>{
-    await runFile(process.execPath,[config.dshCliPath,'plugin','--profile','web','add',folder],{
+  const controller = new PluginController(ctx.loader,paths.pluginsDir,profileDir,async folder=>{
+    assertCliAvailable(paths.dshCliPath)
+    await runFile(process.execPath,[paths.dshCliPath,'plugin','--profile','web','add',folder],{
       timeout:120_000,maxBuffer:1_000_000,windowsHide:true,env:{...process.env,HQ_TARGET_HOST:'kicad',DSH_HOME:process.env.DSH_HOME!},
     })
   },fileURLToPath(new URL('../builtin-state.json',import.meta.url)))
@@ -51,7 +46,7 @@ export function apply(ctx: ManagerContext, config: Config): void {
   if(!ready)throw new Error('dsh-plugin-manager: appReady is required')
   ctx.effect(()=>ready.onReady(()=>{void controller.reconcile().catch(error=>ctx.logger.error(error))}))
   ctx.effect(()=>ctx.connection.fetch.register({path:ROUTE,methods:['GET'],requestBody:'buffered',fetch:async()=>{
-    try{return send(200,{directory:config.pluginsDir,plugins:await controller.list()})}
+    try{return send(200,{directory:paths.pluginsDir,plugins:await controller.list()})}
     catch(error){return send(400,{error:error instanceof Error?error.message:String(error)})}
   }}))
   ctx.effect(()=>ctx.connection.fetch.register({path:`${ROUTE}/toggle`,methods:['POST'],requestBody:'buffered',fetch:async request=>{

@@ -56,7 +56,9 @@ export async function importComponent(mfgId: string, mpn: string, projectDir: st
   if (compatibility.status !== 'ready') throw new Error(`SYMBOL_UNITS_UNSUPPORTED: ${mfgId}:${mpn}; symbol ${source.symbol.name}; sections [${(source.symbol.children ?? []).map(child => child.name).join(', ')}]; source ${source.sourceUrl}; ${compatibility.nextAction}`)
   const nickname = libraryName(mfgId, mpn)
   const footprintText = rawFootprint.endsWith('\n') ? rawFootprint : `${rawFootprint}\n`
-  const footprint = await fs.resolve(join(project.displayPath, `${nickname}.pretty`, `${footprintName}.kicad_mod`), { signal })
+  const legacy = await fs.resolve(join(project.displayPath, `${nickname}.pretty`), { signal })
+  const legacyExists = await fs.stat(legacy, signal) !== undefined
+  const footprint = await fs.resolve(join(project.displayPath, ...(legacyExists ? [] : ['libraries', 'footprints']), `${nickname}.pretty`, `${footprintName}.kicad_mod`), { signal })
   const table = await fs.resolve(join(project.displayPath, 'fp-lib-table'), { signal })
   if (!fs.contains(project, footprint) || !fs.contains(project, table)) throw new Error('Footprint targets must stay inside projectDir')
   const info = await fs.stat(footprint, signal)
@@ -64,7 +66,7 @@ export async function importComponent(mfgId: string, mpn: string, projectDir: st
   const tableInfo = await fs.stat(table, signal)
   if (tableInfo && tableInfo.type !== 'file') throw new Error('fp-lib-table must be a regular file')
   const oldTable = tableInfo ? await fs.readText(table, signal) : null
-  const uri = `\${KIPRJMOD}/${nickname}.pretty`
+  const uri = `\${KIPRJMOD}/${legacyExists ? '' : 'libraries/footprints/'}${nickname}.pretty`
   const entry = `  (lib (name ${quote(nickname)})(type "KiCad")(uri ${quote(uri)})(options "")(descr ""))`
   let nextTable: string | null
   if (oldTable === null) nextTable = `(fp_lib_table\n  (version 7)\n${entry}\n)\n`

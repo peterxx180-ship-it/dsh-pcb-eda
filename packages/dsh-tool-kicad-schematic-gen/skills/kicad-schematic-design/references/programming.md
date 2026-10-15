@@ -2,18 +2,23 @@
 
 多功能区域设计先读 [模块脚本参考](modular-scripts.md)：每个框编写独立模块，统一放置完成后布线，由一个主入口保存整张原理图。下面的单电阻示例用于最小接口演示。
 
-脚本使用普通 ESM JavaScript，保存为 `.mjs`。在 Harness 的 shell 工具中用可用的 Node 执行 `node <项目内脚本绝对路径>`。当前安装库是 `D:/kicad/dsh-pcb-eda/packages/dsh-tool-kicad-schematic-gen/lib/builder.js`；配置与输出目录由脚本明确传入。下面是可运行的电阻示例，实际设计须替换器件和连接。
+脚本使用普通 ESM JavaScript，保存为 `.mjs`。在 Harness 的 shell 工具中用可用的 Node 执行 `node <项目内脚本绝对路径>`。构建库通过当前 skill 末尾提供的安装目录加载；运行项目前设置 `DSH_SCHEMATIC_PLUGIN_DIR`，标准符号库设置 `KICAD_SYMBOL_DIR`（路径同样由 skill 提供）。配置与输出目录由脚本明确传入。下面是可运行的电阻示例，实际设计须替换器件和连接。
 
 ```javascript
-import { Schematic } from 'file:///D:/kicad/dsh-pcb-eda/packages/dsh-tool-kicad-schematic-gen/lib/builder.js';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+const pluginDir = process.env.DSH_SCHEMATIC_PLUGIN_DIR;
+if (!pluginDir) throw new Error('Set DSH_SCHEMATIC_PLUGIN_DIR using the current skill installation path.');
+const { Schematic, templateDir, symbolLibrary } = await import(pathToFileURL(join(pluginDir,
+  'skills/kicad-schematic-design/assets/runtime.mjs')).href);
 const sch = new Schematic({
   projectName: 'resistor_demo', title: 'Resistor example', paper: 'A4',
-  templateDir: 'D:/kicad/dsh-pcb-eda/packages/dsh-tool-kicad-schematic-gen/skills/kicad-schematic-design/templates'
+  templateDir
 });
 const power = sch.region({ name: '电阻模块', description: '10k 电阻示例',
   origin: [30, 30], size: [70, 70] });
 power.addSymbol({
-  libraryPath: 'D:/kicad/10.0.0/share/kicad/symbols/Device.kicad_sym',
+  libraryPath: symbolLibrary('Device'),
   libId: 'Device:R', reference: 'R1', value: '10k', at: [35, 30], angle: 0
 });
 const p1 = power.pin('R1', '1');
@@ -30,6 +35,28 @@ console.log(JSON.stringify(sch.save(outputDirectory)));
 ```
 
 ## 接口
+
+本页与范例是稳定接口入口；正常项目不逐段阅读 lib/builder.js 猜测调用方式。`importModule.name` 使用 ASCII 标识符（如 `power_3v3`），中文放外框标题。先确定连接计划，再生成脚本；文档引脚表与脚本共享同一份 reference/pin/net 数据，避免末尾重新抄写与核对全部引脚。
+
+### 通用标签引出
+
+从 `assets/runtime.mjs` 或 builder 导入 `attachPinLabel`，替代每个项目重写 attach/wiring 函数：
+
+```javascript
+attachPinLabel(region, {reference:'U1',pin:'1',net:'MOT_PWM',direction:'left',length:7.62,lane:1});
+```
+
+direction 显式选择 left/right/up/down，从真实 pin 坐标向外引出；length 为第一段长度，lane 为垂直于引出方向的整数通道，pitch 默认 2.54 mm。相邻引脚可用不同 length/lane 错列。函数不猜符号引脚朝向、不自动避障；不要给已连接到别处的引脚盲目重复加线。文字保持水平，实际空间不足时一次调整该组的通道或外框。
+
+### 执行脚本与读取结果
+
+优先使用技能目录的 `scripts/run-design.mjs`：
+
+```text
+node <skill目录>/scripts/run-design.mjs <design.mjs绝对路径> <唯一候选目录> <构建报告.json>
+```
+
+启动器用当前 Node、参数数组启动项目脚本，自动提供插件目录，并将退出码、stdout/stderr 保存为 UTF-8 JSON，终端只返回摘要。读取报告中的 stdout 得到 save 返回值；不要用 PowerShell `>` 重定向后猜 UTF-8/UTF-16/BOM，不用复杂 node -e 内联正则、Select-Object 截断诊断或为打印状态重新构建。沿用 get_eda_host_info 已知路径，需要时在进程环境提供 KICAD_SYMBOL_DIR；首次预览传已知 kicadCliPath，避免先运行找不到的裸 kicad-cli 再重试。
 
 `importModule({sourcePath,name,offset,nets})` 把已准备的单页电路整体放入当前 Schematic，返回 references、ports、netNames、objectUuids。具体网络隔离和映射见 [平铺整合](flat-reuse.md)。它与 addSymbol 可以共用同一页；新增实例编号须避开导入返回的编号。多个来源先导入全部模块，再从统一编号表分配新增引用，不让每个模块从 R1/U1 重新计数。
 

@@ -58,7 +58,7 @@ test('creates a project-local Symbol library and registers it without replacing 
   const table = await readFile(result.tablePath, 'utf8')
   assert.ok(table.includes(existing.trim().split('\n')[2]!))
   assert.ok(table.includes(`(name "${result.libId.split(':')[0]}")`))
-  assert.ok(table.includes(`\${KIPRJMOD}/${result.libId.split(':')[0]}.kicad_sym`))
+  assert.ok(table.includes(`\${KIPRJMOD}/libraries/symbols/${result.libId.split(':')[0]}.kicad_sym`))
 
   const second = await run(project)
   assert.equal(second.library, 'existing')

@@ -17,6 +17,8 @@ import { children, parse, value } from './sexpr.ts'
 import { buildFlatCopy, listFlatObjects, loadFlatTemplates, summarizeFlatLayout } from './flat.ts'
 import { parseFlatRequest } from './flat-input.ts'
 import {createOverview,registerOverview} from './overview.ts'
+import {previewConfig} from './preview-config.ts'
+import {auditFootprints} from './footprint-links.ts'
 
 import type { Config } from './config.ts'
 
@@ -237,7 +239,7 @@ export function registerSchematicTools(ctx: Context, config: Config): void {
   if (!Number.isInteger(config.maxSchematicBytes) || config.maxSchematicBytes < 1 || config.maxSchematicBytes > 50000000) {
     throw new Error('kicad-schematic-tools: maxSchematicBytes must be 1 to 50000000')
   }
-  if (!isAbsolute(config.kicadCliPath)) throw new Error('kicad-schematic-tools: kicadCliPath must be absolute')
+  if (!isAbsolute(config.kicadCliPath) && !['kicad-cli', 'kicad-cli.exe'].includes(config.kicadCliPath)) throw new Error('kicad-schematic-tools: kicadCliPath must be absolute or the kicad-cli PATH command')
   positiveInteger(config.previewDensity, 'previewDensity', 1200)
   positiveInteger(config.previewMaxWidth, 'previewMaxWidth', 4096)
   positiveInteger(config.previewMaxPages, 'previewMaxPages', 16)
@@ -294,6 +296,7 @@ export function registerSchematicTools(ctx: Context, config: Config): void {
       properties: {
         schematicPath: { type: 'string' },
         delivery: { type: 'boolean', description: 'True only for final saved project delivery: show an overview card and snapshot a downloadable project ZIP. Omit during layout review.' },
+        kicadCliPath: {type:'string',description:'Optional absolute kicad-cli path already returned by get_eda_host_info. Reuse known host information; omit to use plugin configuration.'},
         projectDir: { type: 'string', description: 'With delivery:true, project folder containing the schematic, local symbol/footprint libraries and library tables. Defaults to the schematic folder. Must stay inside workspace.' },
         regions: { type: 'array', items: regionSchema, description: 'Optional module crops in schematic millimetres; defaults to annotated root-sheet rectangles. [] disables region crops.' },
         pageNames: { type: 'array', items: { type: 'string' }, description: 'Optional exact exported page names to render; defaults to root first. Use omittedPages names to request missing pages.' },
@@ -303,6 +306,7 @@ export function registerSchematicTools(ctx: Context, config: Config): void {
       schematicPath: { type: 'string' }, revision: { type: 'string' }, outputDir: { type: 'string' },
       overview: { oneOf: [{type:'null'}, {type:'object', properties: {
         title:{type:'string'},revision:{type:'string'},downloadUrl:{type:'string'},filename:{type:'string'},fileCount:{type:'integer'},size:{type:'integer'},
+        projectKey:{type:'string'},createdAt:{type:'number'},
         pages:{type:'array',items:{type:'object',properties:{name:{type:'string'},imageUrl:{type:'string'}},required:['name','imageUrl']}},
       },required:['title','revision','downloadUrl','filename','fileCount','size','pages']}] },
       overviewError: {oneOf:[{type:'string'},{type:'null'}]},
@@ -327,7 +331,8 @@ export function registerSchematicTools(ctx: Context, config: Config): void {
       'pageCount', 'truncated', 'pages', 'failures', 'status', 'rootImagePath', 'omittedPages', 'readImageInstruction', 'regionImages', 'regionManifestPath'] },
     render: (_args, output) => [{ type: 'text', text: JSON.stringify(output, null, 2) }] },
     async execute(args, exec) {
-      const input = validateKeys(args, ['schematicPath', 'outputDir', 'pageNames', 'regions', 'delivery', 'projectDir'], 'render_kicad_module_preview')
+      const input = validateKeys(args, ['schematicPath', 'outputDir', 'pageNames', 'regions', 'delivery', 'projectDir','kicadCliPath'], 'render_kicad_module_preview')
+      const renderConfig=previewConfig(config,input.kicadCliPath)
       if(input.delivery !== undefined && typeof input.delivery !== 'boolean')throw new Error('delivery must be boolean')
       if(input.projectDir !== undefined && input.delivery !== true)throw new Error('projectDir requires delivery:true')
       const workspace = workspaceRoot(exec.agent)
@@ -341,7 +346,7 @@ export function registerSchematicTools(ctx: Context, config: Config): void {
       const pageNames = input.pageNames === undefined ? [] : parseUnconnectedPorts(input.pageNames, 'pageNames')
       if (pageNames.length > config.previewMaxPages) throw new Error(`code=PREVIEW_PAGE_LIMIT; retryUnchanged=false; request at most ${config.previewMaxPages} pageNames per call.`)
       const regions = resolvePreviewRegions(input.regions, source.text, basename(source.path, '.kicad_sch'), config.flatListLimit)
-      const rendered = await renderModulePreview(outputDir, source.path, revision, config, exec.signal, sources, undefined, pageNames)
+      const rendered = await renderModulePreview(outputDir, source.path, revision, renderConfig, exec.signal, sources, undefined, pageNames)
       const selectedRegions = input.regions === undefined ? regions.filter(r => rendered.pages.some(p => p.exportedPageName === r.pageName)) : regions
       const crops = await renderPreviewRegions(rendered.pages, selectedRegions, revision, rendered.manifestPath, config, exec.signal)
       const failures = [...rendered.failures, ...crops.failures]
@@ -353,6 +358,11 @@ export function registerSchematicTools(ctx: Context, config: Config): void {
         else try {
           const project = input.projectDir === undefined ? dirname(source.path) : requiredString(input,'projectDir')
           const resolved = await ctx.fs.resolve(project,{cwd:workspace,signal:exec.signal})
+          for(const item of sources){
+            const sheet=item.schematicPath===source.path?source:await readWorkspaceSchematic(ctx.fs,workspace,item.schematicPath,config.maxSchematicBytes,exec.signal);
+            const footprints=await auditFootprints(sheet.text,resolved.displayPath,ctx.fs,exec.signal)
+            if(footprints.status!=='ready')throw new Error(`FOOTPRINTS_UNRESOLVED: ${footprints.unresolved.length} of ${footprints.total} physical instances in ${item.schematicPath} lack project-local footprints. Run localize_kicad_module_footprints check/import and persist script mappings before delivery.`)
+          }
           overview = await createOverview({workspace,projectDir:resolved.displayPath,schematicPath:source.path,revision,pages:rendered.pages,sources})
         }catch(error){overviewError=error instanceof Error?error.message:String(error)}
       }

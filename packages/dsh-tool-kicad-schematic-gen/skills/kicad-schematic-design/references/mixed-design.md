@@ -2,17 +2,17 @@
 
 适用于已有核心模块、另需补充供电或接口的平铺工程。使用 [主入口](../assets/mixed-design/design.mjs) 和 [独立负载模块](../assets/mixed-design/modules/load.mjs) 作为结构参考；示例只展示连接方式，不代表具体产品的推荐电路。器件数据使用线上搜索、模型摘要和导入结果，不沿用示例器件作为选型依据。
 
-执行 `node design.mjs <绝对配置路径> <绝对候选目录>`。配置如下；sourcePath、signalPort、网络映射、布局和引脚号必须换成已检查的模块及器件信息。
+执行 `node design.mjs <绝对配置路径> <绝对候选目录>`。复制示例到项目时保留 assets 的相对目录结构，并按 skill 的当前安装路径设置 DSH_SCHEMATIC_PLUGIN_DIR、KICAD_SYMBOL_DIR。配置中的占位路径必须替换为本机真实绝对路径；powerSymbols.libraryPath 可通过 symbolLibrary('power') 获取。配置如下；sourcePath、signalPort、网络映射、布局和引脚号必须换成已检查的模块及器件信息。
 
 ```json
 {
   "projectName": "mixed_demo", "title": "Mixed circuit", "paper": "A4",
-  "source": { "sourcePath": "D:/project/designs/demo/work/core.kicad_sch", "name": "core", "offset": [0, 0], "nets": { "OUT": "SIGNAL", "GND": "GND" } },
+  "source": { "sourcePath": "<实际项目绝对路径>/designs/demo/work/core.kicad_sch", "name": "core", "offset": [0, 0], "nets": { "OUT": "SIGNAL", "GND": "GND" } },
   "sourceTitle": "核心模块", "sourceDescription": "已检查的核心电路；适用条件简述",
   "signalPort": "OUT", "groundNet": "GND",
-  "powerSymbols": { "libraryPath": "D:/kicad/10.0.0/share/kicad/symbols/power.kicad_sym", "nets": { "GND": "power:GND" } },
+  "powerSymbols": { "libraryPath": "<实际符号库目录>/power.kicad_sym", "nets": { "GND": "power:GND" } },
   "loadRegion": { "name": "新增负载", "description": "用途及参数", "origin": [160, 30], "size": [70, 80] },
-  "resistor": { "libraryPath": "D:/project/designs/demo/project/selected.kicad_sym", "libId": "Selected:ExactSymbol", "unit": 1, "value": "10k", "pins": { "signal": "1", "ground": "2" } }
+  "resistor": { "libraryPath": "<实际项目绝对路径>/designs/demo/project/selected.kicad_sym", "libId": "Selected:ExactSymbol", "unit": 1, "value": "10k", "pins": { "signal": "1", "ground": "2" } }
 }
 ```
 

@@ -13,11 +13,11 @@ function harness(host?:object){
   return{tools,getProvider:()=>provider,dispose:()=>cleanups.reverse().forEach(fn=>fn())}
 }
 
-test('schematic plugin owns twelve tools while component search is a separate plugin',async()=>{
+test('schematic plugin owns thirteen tools while component search is a separate plugin',async()=>{
   const h=harness()
   assert.equal(name,'@local/dsh-tool-kicad-schematic-gen')
   assert.deepEqual(inject,['tools','fs','sandboxPolicy','skills','webServer'])
-  assert.equal(h.tools.size,12)
+  assert.equal(h.tools.size,13)
   assert.ok(!h.tools.has('search_kicad_parts'));assert.ok(!h.tools.has('get_kicad_supply_chain'))
   assert.ok(!h.tools.has('search_hqsch_parts'))
   assert.ok(h.tools.has('import_kicad_symbol'));assert.ok(h.tools.has('download_eda_module_schematic'))
@@ -28,7 +28,7 @@ test('schematic plugin owns twelve tools while component search is a separate pl
 test('unavailable HQ Edge fails only module download, not plugin registration',async()=>{
   const h=harness()
   await assert.rejects(h.tools.get('download_eda_module_schematic').execute({moduleId:'1'},{signal:new AbortController().signal}),/Open KiCad with HQ Edge/)
-  assert.equal(h.tools.size,12);h.dispose()
+  assert.equal(h.tools.size,13);h.dispose()
 })
 test('partial configuration preserves unrelated limits and bundled template paths',()=>{
   const config=resolveConfig({components:{maxModelBytes:2000000},modules:{search:{maxResults:5}}})

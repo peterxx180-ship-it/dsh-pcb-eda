@@ -7,6 +7,10 @@ description: Design KiCad schematics by searching HQ EDA modules first, reusing 
 
 在当前 KiCad 项目交付可编辑的完整原理图。需要启用 `@huaqiu/dsh-tool-part-search` 和 `@local/dsh-tool-kicad-schematic-gen`；工具关闭时不绕过开关访问同一服务。确认会话工作目录与目标项目一致，处理编辑器中相关文件的未保存改动。
 
+脚本使用本 skill 末尾运行时提供的安装目录设置 `DSH_SCHEMATIC_PLUGIN_DIR`、`KICAD_SYMBOL_DIR`；参考示例统一通过 assets/runtime.mjs 加载库和模板，不写死其他电脑的目录。复制 assets 示例时保留其相对结构。
+
+环境信息按需获取：已有 `get_eda_host_info` 返回值时复用，不因读取另一张预览、重跑脚本或导入另一个器件而重复查询。正常生成、读取和渲染原理图不依赖 PCB IPC，不运行 `kicad_ipc_diagnose`，也不查找 Python。只有开始通过 IPC 操作 PCB 时才执行相应诊断。CLI 使用插件默认配置；已有宿主返回的 `kicad-cli` 绝对路径时，可传给 `render_kicad_module_preview.kicadCliPath`。仅在路径缺失、命令无法启动或宿主环境变更时重新查询；不要另写目录扫描脚本。
+
 ## 1. 明确需求与原理图形式
 
 明确功能、芯片型号、供电、接口电平、负载和器件约束。用户指定平铺或层次时遵循用户要求；否则默认平铺，多功能模块可用规则外框组织在同一页。只有电路非常复杂、跨区连接密集或单页难以阅读维护时采用层次结构，并说明选择依据。不能只因使用多个下载模块就改成层次工程。
@@ -22,6 +26,12 @@ description: Design KiCad schematics by searching HQ EDA modules first, reusing 
 每个功能分别决定直接复用、修改复用或从零设计；一个完整工程可混合这三种来源。满足需求时直接复用，基本匹配时优先修改副本；明确无法满足或搜索无合适候选时再从零设计缺少的模块或完整电路，不重新绘制适用的已有电路。
 
 ## 3. 修改与器件获取
+
+对选定的复用模块完成[模块封装本地化](references/module-footprints.md)：先 list 原实例，优先利用模块下载返回的 footprints，缺失时搜索精确器件并只下载对应封装；保存 mappingPath，并在设计脚本的 importModule 中传 footprintMappingPath。已有符号和电路保持不变。最终 project 中每个需要上板的实例都必须指向实际存在的本地封装，不能保留未注册的 kicad_api_lib 引用；电源符号不要求封装。来源内容变化时重新生成映射，布局重跑时复用记录。
+
+封装准备从模块确定后开始，与布局工作交错推进，不留到交付前集中补齐。`import.stage=prepared` 只表示库与映射就绪，来源未改写时用 `check_mapping` 检查准备状态；`check` 留给已应用映射的实际候选/最终原理图，避免把源文件 resolved:0 当成下载失败。先利用 list 的 dnp、端口工具和器件引脚信息明确真实接法，再共用连接计划生成脚本与文档引脚表。
+
+项目本地器件库统一归类：符号写入 `project/libraries/symbols/*.kicad_sym`，封装写入 `project/libraries/footprints/*.pretty/`；`sym-lib-table` 和 `fp-lib-table` 保留在 project 根目录，通过 `${KIPRJMOD}/libraries/...` 注册。复用导入工具返回的 libraryPath、libId、footprintId，不另在根目录创建副本。设计脚本使用相对于自身文件位置的路径定位 project，并保留整个 libraries 目录用于打包和后续 PCB。旧项目已有根目录库时，工具仍可复用；整理旧项目须同步库表和脚本路径，不改变库昵称或实例关联。
 
 专门的器件搜索由 KiCad 内置插件 `@huaqiu/dsh-tool-part-search` 提供。用 `search_hqsch_parts({query, page, page_size, require_eda_model: true, requirements: {symbol: true, footprint: true}})` 搜索型号或功能规格，结果在 `items` 中，支持分页。需要完整参数、分类、文档或标签时，用选定器件的 `manufacturer.id` 和精确型号调用 `get_hqsch_part({manufacturer_id, mpn})`。`get_hqsch_part_models({manufacturer_id, mpn})` 只返回符号、封装、3D 等模型链接，不下载或解析；检查实际引脚和焊盘仍用原理图插件的 `get_kicad_component_models({manufacturer_id, mpn})`。仅在需要采购信息时调用 `get_hqsch_supply_chain({parts: [{manufacturer_id, mpn}]})`，空报价不代表市场无库存。搜索中的模型标记可能由筛选条件推导，不能据此认定模型一定存在或不存在；以详情、模型链接及实际解析结果核对。搜索插件关闭或不可用时说明条件，不绕过开关；可继续检查已有模块，缺少在线符号的部分按本节回退规则处理。
 
@@ -39,6 +49,8 @@ description: Design KiCad schematics by searching HQ EDA modules first, reusing 
 
 从零编写或补充电路时读取 [编程接口](references/programming.md) 与 [模块脚本组织](references/modular-scripts.md)。模型决定器件、连接和布局，现有 builder.js 处理文件格式与真实引脚坐标。多功能电路采用 design.mjs 主入口和 modules/ 下每框独立脚本，共享器件数据与引用编号；先放置全部器件，再布线，最后统一保存。下载复用模块和新编写模块可同时进入同一个 Schematic；此组合优先按 [混合整合范例](references/mixed-design.md) 编写主入口，导入模块后将返回的目标引用编号登记到共享分配器，再放置新增器件。只修受影响模块和连接，避免重新读取全部代码。默认不创建 smoke.mjs 或单电阻测试工程；直接生成实际候选并调用预览。只有库接口发生变化或明确的内部错误才做最小复现。先用生成器返回的全部外框坐标检查页面范围与框间重叠，集中调整一次后再预览，不为打印坐标重复生成候选。
 
+常规标签引出优先用编程接口中的 attachPinLabel；执行用 scripts/run-design.mjs 保存 UTF-8 构建报告，正常项目不读取编译库源码猜接口。同一问题连续两轮仍未改善时，改用更宽外框或不同引线通道，集中处理明确遮挡；不跳过电气问题或无法辨认的内容。
+
 平铺整合或从零设计时，明确共享的 GND 和电源网络使用标准 KiCad 电源符号，普通信号保留标签。在创建 Schematic 时把本设计实际使用的共享电源声明为 requiredPowerSymbols；先调用 sch.planPowerPlacements({libraryPath: POWER_LIB, nets: powerNets}) 批量规划方向、水平文字位置和有限短引出线，再在同一次构建中用 plan.placements 调用 sch.replacePowerLabels。不统一覆写所有 angle=0 或固定上下文字偏移。集中处理 diagnostics.unresolved 和未测量对象，结合局部预览只修实际剩余遮挡；需要手动覆盖时用 sch.powerLabelCatalog(Object.keys(powerNets)) 获取本次 UUID、网络、整页坐标和导入模块名，按模块/网络/坐标选取目标后覆盖对应 plan.placements。完整接口与例子见 [电源符号交付](references/power-symbols.md)。不得复制上一轮 UUID；UUID 变化不构成取消电源符号的理由。出现遮挡时优先修改 valueAt，再按需调整符号位置、angle 和正交 via，保持原接点连接；GND 优先向下。不得为消除重叠删除转换调用、撤掉 requiredPowerSymbols 或改回纯电源标签。保存前 checkPowerSymbols 核对声明的网络；render/save 自动执行同一检查，POWER_SYMBOLS_REQUIRED 按缺失符号/残留标签修复。确实无法完成时报告具体未解决位置，不宣称完成交付。layoutWarnings 是保守提示，集中处理后查看局部预览；编号与结构检查不代替电气验证。不自动合并 AGND/DGND、隔离电源或未确认的 VBAT，也不自动添加 PWR_FLAG。
 
 层次路线读取 [层次组织](references/hierarchy.md)：每个功能子页可复用、修改或从零设计。子页必须有实际接入电路的明确层次标签。规划所有端口的 connections/unconnectedPorts，使用 create_kicad_hierarchy 生成根图与子页。端口方向统一 passive，方向冲突作为来源提示，不阻断连接。层次文件格式仅在手工处理或诊断失败时读取 [KiCad 10 参考](references/kicad10-hierarchy.md)。
@@ -51,4 +63,4 @@ description: Design KiCad schematics by searching HQ EDA modules first, reusing 
 
 候选通过后发布到固定 project/，只替换本设计生成的工程文件和已列明子页，保留符号库、来源和其他工程文件。正式工程使用相对子页路径，再生成正式预览；安全清理本轮候选。交付正式原理图、工程配置、所需符号库、脚本、来源与预览，说明复用/修改/新设计的模块及未核实条件。默认不运行 ERC、不导出或比对网表、不编写端点审计、不生成 PCB；用户明确要求时再执行。预览和连接计划不能称为电气验证通过。
 
-最终正式工程的预览调用 `render_kicad_module_preview({schematicPath: 正式原理图路径, projectDir: 正式project目录, delivery: true})`，可复用同版本渲染缓存，在对话中显示原理图概览、页面切换、缩放和工程 ZIP 下载卡片。中间布局检查不传 delivery。projectDir 必须同时包含根图、子页和工程所需本地库；ZIP 收集该目录内原理图、工程配置、符号、封装、库表及3D模型，不包含脚本、来源、预览或工作区外的库。返回 overviewError 时说明卡片或打包不可用，保留已生成工程和现有本地预览，不因此重建电路。卡片不提供重新生成、详情或自动放置按钮。概览不代表电气验证通过。
+先在候选上完成最后一次读图、修复、封装检查和发布，再生成正式概览；不要先 delivery 再读取图片继续布局修改。若发现新问题，使用普通预览修复完成后再正式交付。同一工程重复正式交付时界面只保留最新卡片，旧 ZIP 快照仍保留。最终正式工程的预览调用 `render_kicad_module_preview({schematicPath: 正式原理图路径, projectDir: 正式project目录, delivery: true})`，可复用同版本渲染缓存，在对话中显示原理图概览、页面切换、缩放和工程 ZIP 下载卡片。中间布局检查不传 delivery。projectDir 必须同时包含根图、子页和工程所需本地库；ZIP 收集该目录内原理图、工程配置、符号、封装、库表及3D模型，不包含脚本、来源、预览或工作区外的库。返回 overviewError 时说明卡片或打包不可用，保留已生成工程和现有本地预览，不因此重建电路。卡片不提供重新生成、详情或自动放置按钮。概览不代表电气验证通过。
