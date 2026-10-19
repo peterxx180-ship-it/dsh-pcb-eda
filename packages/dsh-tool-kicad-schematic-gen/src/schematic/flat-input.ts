@@ -3,7 +3,8 @@ import { requiredString, validateKeys } from './input.ts'
 import type { FlatEndpoint, FlatPlan, FlatPoint } from './flat.ts'
 
 /** Read-only catalog or creation of a new edited project copy. */
-export type FlatRequest = { action: 'list'; sourcePath: string; offset: number; limit: number; types: string[] }
+export type FlatRequest = { action: 'list'; sourcePath: string; offset: number; limit: number; types: string[]; references: string[] }
+  | { action: 'connections'; sourcePath: string; reference: string; pin: string; offset: number; limit: number }
   | { action: 'create'; sourcePath: string; targetDir: string; projectName: string; plan: FlatPlan }
 
 function list(value: unknown, name: string): unknown[] {
@@ -35,19 +36,28 @@ function uuid(value: unknown): string {
  * @returns A list or create request with all operation arrays present.
  */
 export function parseFlatRequest(args: unknown, listLimit: number): FlatRequest {
-  const input = validateKeys(args, ['action', 'sourcePath', 'offset', 'types', 'targetDir', 'projectName',
+  const input = validateKeys(args, ['action', 'sourcePath', 'offset', 'types', 'references', 'reference', 'pin', 'targetDir', 'projectName',
     'removeReferences', 'removeUuids', 'removeTextUuids', 'setValues', 'setLabels', 'addWires', 'frames'], 'edit_kicad_flat_schematic')
   const sourcePath = requiredString(input, 'sourcePath')
+  if (input.action === 'connections') {
+    validateKeys(input, ['action', 'sourcePath', 'reference', 'pin', 'offset'], 'flat connections')
+    const offset = input.offset ?? 0
+    if (typeof offset !== 'number' || !Number.isInteger(offset) || offset < 0) throw new Error('offset must be a non-negative integer')
+    return {action: 'connections', sourcePath, reference: requiredString(input, 'reference'),
+      pin: requiredString(input, 'pin'), offset, limit: listLimit}
+  }
   if (input.action === 'list') {
-    validateKeys(input, ['action', 'sourcePath', 'offset', 'types'], 'flat list')
+    validateKeys(input, ['action', 'sourcePath', 'offset', 'types', 'references'], 'flat list')
     const offset = input.offset === undefined ? 0 : input.offset
     if (typeof offset !== 'number' || !Number.isInteger(offset) || offset < 0) throw new Error('offset must be a non-negative integer')
     const types = list(input.types, 'types').map(item => text(item, 'type'))
     const supported = ['symbol', 'wire', 'junction', 'label', 'global_label', 'hierarchical_label', 'no_connect', 'text', 'text_box', 'rectangle', 'polyline', 'image']
     if (types.some(type => !supported.includes(type))) throw new Error(`types must use ${supported.join(', ')}`)
-    return { action: 'list', sourcePath, offset, limit: listLimit, types }
+    const references = list(input.references, 'references').map(item => text(item, 'reference'))
+    return { action: 'list', sourcePath, offset, limit: listLimit, types, references }
   }
-  if (input.action !== 'create') throw new Error('action must be list or create')
+  if (input.action !== 'create') throw new Error('action must be list, connections or create')
+  if (input.references !== undefined || input.reference !== undefined || input.pin !== undefined) throw new Error('reference selectors apply only to list/connections')
   if (input.offset !== undefined || input.types !== undefined) throw new Error('offset and types apply only to list')
   const plan: FlatPlan = {
     removeReferences: list(input.removeReferences, 'removeReferences').map(item => text(item, 'reference')),

@@ -13,3 +13,4 @@ coverage/
 .overview-cache/
 builtin-state.json
 *.tsbuildinfo
+__pycache__

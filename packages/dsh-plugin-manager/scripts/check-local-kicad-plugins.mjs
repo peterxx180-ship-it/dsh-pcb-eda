@@ -22,5 +22,6 @@ assert.ok(!/[A-Za-z]:[\\/]/.test(manager), 'Manager patch must not contain machi
 const library=await import(new URL('../../dsh-tool-kicad-schematic-gen/lib/index.js',import.meta.url))
 const tools=[]
 library.apply({get:()=>undefined,effect:fn=>fn(),skills:{registerProvider:()=>()=>{}},tools:{register:t=>{tools.push(t);return()=>{}}}},library.resolveConfig())
-assert.equal(tools.length,13)
-console.log('PASS: two private plugins, client bundles, 13 tools, migrated skill paths and updater discovery.')
+assert.equal(tools.length,14)
+assert.ok(tools.some(tool=>tool.name==='analyze_kicad_module'))
+console.log('PASS: two private plugins, client bundles, 14 tools, migrated skill paths and updater discovery.')

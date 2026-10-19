@@ -399,7 +399,8 @@ export class Schematic {
   label(name: string, at: FlatEndpoint, angle: 0 | 90 | 180 | 270 = 0): string {
     if (!name || ![0, 90, 180, 270].includes(angle)) throw new Error('label needs a name and orthogonal angle')
     const p = this.endpoint(at), id = randomUUID()
-    this.graphics.push(`(label ${quote(name)} (at ${p[0]} ${p[1]} ${angle}) (effects (font (size 1.27 1.27)) (justify left bottom)) (uuid ${quote(id)}))`)
+    const justify = angle === 180 || angle === 270 ? 'right' : 'left'
+    this.graphics.push(`(label ${quote(name)} (at ${p[0]} ${p[1]} ${angle}) (effects (font (size 1.27 1.27)) (justify ${justify} bottom)) (uuid ${quote(id)}))`)
     return id
   }
   /** List only explicitly selected local/global labels in this build, before conversion.

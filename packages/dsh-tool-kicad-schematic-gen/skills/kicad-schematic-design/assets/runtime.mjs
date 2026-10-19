@@ -9,6 +9,7 @@ if (!existsSync(builderPath)) throw new Error('Set DSH_SCHEMATIC_PLUGIN_DIR to t
 const builder = await import(pathToFileURL(builderPath).href);
 export const Schematic = builder.Schematic;
 export const attachPinLabel = builder.attachPinLabel;
+export const attachPinLabels = builder.attachPinLabels;
 export const templateDir = join(pluginDir, 'skills', 'kicad-schematic-design', 'templates');
 let symbolDir;
 export function symbolLibrary(name) {

@@ -1,7 +1,9 @@
 import { existsSync } from 'node:fs'
 import { dirname, join, delimiter } from 'node:path'
 
-/** Locate the current host installation first, then an explicit override or PATH. */
+const isDefaultCommand = (value: string | undefined) => !value || /^kicad-cli(?:\.exe)?$/i.test(value.trim())
+
+/** Explicit paths override discovery; default command names still discover the host and PATH. */
 export function resolveKiCadPaths(executable = process.execPath, env: NodeJS.ProcessEnv = process.env): { kicadCliPath: string; symbolDir?: string } {
   const roots: string[] = []
   let directory = dirname(executable)
@@ -14,7 +16,8 @@ export function resolveKiCadPaths(executable = process.execPath, env: NodeJS.Pro
   const cliName = process.platform === 'win32' ? 'kicad-cli.exe' : 'kicad-cli'
   const candidates = roots.flatMap(root => [join(root, cliName), join(root, 'bin', cliName)])
   candidates.push(...(env.PATH ?? env.Path ?? '').split(delimiter).filter(Boolean).map(dir => join(dir, cliName)))
-  const kicadCliPath = env.KICAD_CLI_PATH || candidates.find(candidate => existsSync(candidate)) || cliName
+  const override = env.KICAD_CLI_PATH?.trim()
+  const kicadCliPath = (!isDefaultCommand(override) ? override : undefined) || candidates.find(candidate => existsSync(candidate)) || cliName
   const symbolCandidates = [env.KICAD_SYMBOL_DIR,
     ...Object.keys(env).filter(key => /^KICAD\d+_SYMBOL_DIR$/.test(key)).sort((a,b) => Number(b.match(/\d+/)![0]) - Number(a.match(/\d+/)![0])).map(key => env[key]),
     join(dirname(dirname(kicadCliPath)), 'share', 'kicad', 'symbols'),
@@ -27,6 +30,8 @@ export function resolveKiCadPaths(executable = process.execPath, env: NodeJS.Pro
 let cachedEnvironment:string|undefined;
 const pathsByOverride=new Map<string|undefined,ReturnType<typeof resolveKiCadPaths>>();
 export function getKiCadPaths(kicadCliPath?:string):ReturnType<typeof resolveKiCadPaths>{
+ // Schema-filled defaults must not hide an environment override or host installation.
+ if(isDefaultCommand(kicadCliPath))kicadCliPath=undefined;
  const env=process.env;
  const key=JSON.stringify([process.execPath,env.KICAD_CLI_PATH,env.KICAD_SYMBOL_DIR,env.PATH??env.Path,
   Object.keys(env).filter(name=>/^KICAD\d+_SYMBOL_DIR$/.test(name)).sort().map(name=>[name,env[name]])]);

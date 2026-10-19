@@ -8,7 +8,7 @@
 | 电路模块搜索下载 | eda_module_rag_search、eda_module_category_search、eda_module_precise_search、download_eda_module_schematic |
 | 原理图工具 | get_kicad_module_ports、render_kicad_module_preview、create_kicad_hierarchy、edit_kicad_flat_schematic |
 
-同时注册 kicad-schematic-design 技能。元件搜索由KiCad 内置的 @huaqiu/dsh-tool-part-search 提供，调用 search_hqsch_parts。该搜索插件随 KiCad 提供，可在插件管理器中启用；原理图插件本身不注册它的四个查询工具。两者间将搜索结果的 manufacturer.id 映射为 manufacturer_id，mpn 保持不变；旧 mfgId 参数继续兼容。
+同时注册 kicad-schematic-design 技能。元件搜索由KiCad 内置的 @huaqiu/dsh-tool-part-search 提供，调用 search_hqsch_parts。该搜索插件随 KiCad 提供，可在插件管理器中启用；原理图插件本身不注册它的四个查询工具。两者间将搜索结果的 manufacturer.id 映射为 manufacturer_id，mpn 保持不变；公开工具统一要求 manufacturer_id 和 mpn，不再暴露 mfgId；两个导入工具额外支持可选 projectDir，默认工作区根目录。内部身份解析保留旧调用兼容，经过工具 Schema 校验的调用必须使用 manufacturer_id。
 
 配置分为 components、modules.search、modules.download、schematic，使用原配置的默认限额。flatTemplateDir 默认指向本包技能模板。Node 22.19+，KiCad 10 CLI 路径可通过 schematic.kicadCliPath 配置。
 
@@ -28,7 +28,7 @@ KiCad CLI 自动从当前运行时安装位置或 PATH 查找，也可通过 KIC
 
 在工作区根目录执行 pnpm --filter @local/dsh-tool-kicad-schematic-gen build、typecheck 或 test。使用配套 DSH CLI 注册本目录，替换旧四个插件，并重新打开 KiCad AI 助手。历史备份和旧脚本兼容见 [合并说明](../../docs/SCHEMATIC-MERGE.md)。
 
-成套器件导入：`import_kicad_component({manufacturer_id, mpn, projectDir})` 同时下载符号与封装，登记两个项目库表，返回 `footprintId`。放置时传 `footprint: imported.footprintId`。两种实际模型可用且引脚/焊盘编号集合匹配才成功；仍需手册核对尺寸与功能。旧 `mfgId` 参数兼容保留。
+成套器件导入：`import_kicad_component({manufacturer_id, mpn, projectDir})` 同时下载符号与封装，登记两个项目库表，返回 `footprintId`。放置时传 `footprint: imported.footprintId`。两种实际模型可用且引脚/焊盘编号集合匹配才成功；仍需手册核对尺寸与功能。公开调用只使用 `manufacturer_id`，旧 `mfgId` 仅在内部解析层为历史直接调用保留。
 
 电源符号：在构建选项中声明实际共享网络 `requiredPowerSymbols`。`powerLabelCatalog(nets)` 返回本次标签 UUID、网络、坐标和导入模块名，按这些条件定位后生成 placements，不引用上一轮 UUID。`checkPowerSymbols()` 与 render/save 检查声明网络的标准符号和残留标签；未完成时拒绝保存。遮挡提示仍需局部预览确认，详见 [电源符号交付](skills/kicad-schematic-design/references/power-symbols.md)。
 
@@ -45,3 +45,5 @@ KiCad CLI 自动从当前运行时安装位置或 PATH 查找，也可通过 KIC
 - builder 新增 `attachPinLabel`，支持显式方向、引线长度与通道错列；不推断引脚方向或自动避障。
 - 技能目录 `scripts/run-design.mjs` 使用参数数组启动生成脚本，将退出码、执行时间和完整输出保存为 UTF-8 JSON；终端仅返回摘要，避免 PowerShell 转义、输出截断和 BOM 返工。模块封装准备提前进行，文档与脚本复用连接计划。
 
+
+模块分析查询：`analyze_kicad_module({schematicPath, view, reference?, pin?, net?, offset?, kicadCliPath?})`。`view` 必填；下载已给分析摘要，直接查询所需 `components`、`nets` 或 `bom`。CLI/源工程默认内部解析；路径或启动失败 `CLI_START_FAILED` 时，复用 `get_eda_host_info` 返回的 kicad-cli 绝对路径，通过可选 `kicadCliPath` + `view:summary` 直接重试分析，不重新下载。成功路径后续复用，默认命令名不会覆盖自动发现；探测失败返回 `error:{code,executable}` 并区分启动、能力不支持、超时和命令失败。任意本地图采用同名 `.kicad_pro`，下载模块重启后可识别同名 `.source.kicad_pro`。详情返回 `status`、`items`、可选 `nextOffset`/`warnings`；网络按组分块，BOM 按全部物料字段与装配状态合并，器件自定义字段在指定 `reference` 时返回。部分失败结果供详情查询复用，修复后用 `view:summary` 重试。缺失 `nextOffset` 表示结束；不可用数据会明确警告。完整本地分析文件仍保留，详见 [模块分析](skills/kicad-schematic-design/references/module-analysis.md)。此接口替换旧版分析查询参数及返回结构，旧调用需同步更新。

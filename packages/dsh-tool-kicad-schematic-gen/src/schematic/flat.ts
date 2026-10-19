@@ -36,13 +36,17 @@ export interface FlatObject {
   reference?: string
   libId?: string
   unit?: number
+  angle?: number
+  mirror?: string
+  footprint?: string
+  dnp?: boolean
   value?: string
   name?: string
   at?: FlatPoint
   from?: FlatPoint
   to?: FlatPoint
   pinError?: string
-  pins?: Array<{ number: string; name: string; at: FlatPoint }>
+  pins?: Array<{ number: string; name: string; at: FlatPoint; electricalType: string }>
   bounds?: FlatBounds
   boundsError?: string
   image?: FlatImage
@@ -109,7 +113,7 @@ function replaceAtom(source: string, form: Form, index: number, next: string): T
   return { start: form.start + atom.index, end: form.start + atom.index + atom[0].length, text: next }
 }
 
-function pins(root: Form, instance: Form): Array<{ number: string; name: string; at: FlatPoint }> {
+function pins(root: Form, instance: Form): NonNullable<FlatObject['pins']> {
   const libId = value(required(instance, 'lib_id'))
   const matches = children(required(root, 'lib_symbols'), 'symbol').filter(item => value(item) === libId)
   if (matches.length !== 1) throw new Error(`embedded symbol cache must uniquely match ${libId}`)
@@ -140,6 +144,7 @@ function pins(root: Form, instance: Form): Array<{ number: string; name: string;
       const y = axis === 'x' ? -rotatedY : rotatedY
       const round = (number: number) => Math.round(number * 1e6) / 1e6
       return { number: value(required(pin, 'number')), name: value(required(pin, 'name')),
+        electricalType: value(pin),
         at: [round(origin[0] + x), round(origin[1] - y)] as FlatPoint }
     })
   })
@@ -164,6 +169,11 @@ export function listFlatObjects(source: string, style?: FlatLayoutStyle): FlatOb
       object.reference = reference(form)
       object.libId = value(required(form, 'lib_id'))
       object.unit = Number(value(required(form, 'unit')))
+      object.angle = Number(value(required(form, 'at'), 3))
+      object.mirror = children(form, 'mirror').map(item => value(item)).join('')
+      const footprint = children(form, 'property').find(item => value(item) === 'Footprint')
+      if (footprint) object.footprint = value(footprint, 2)
+      object.dnp = children(form, 'dnp').some(item => value(item) === 'yes')
       object.value = value(property(form, 'Value'), 2)
       try { object.pins = pins(root, form) }
       catch (error) { object.pinError = error instanceof Error ? error.message : String(error) }

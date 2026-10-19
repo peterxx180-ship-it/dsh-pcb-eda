@@ -15,6 +15,25 @@ import {inspectModuleFootprints,localizeFootprints,type FootprintAssignment} fro
 
 import type { Config } from './config.ts'
 
+/** Match the public identity contract of @huaqiu/dsh-tool-part-search. */
+const componentParameters = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    manufacturer_id: { type: 'string', description: 'Manufacturer ID: use manufacturer.id from search_hqsch_parts.' },
+    mpn: { type: 'string', description: 'Exact manufacturer part number from the same candidate.' },
+  },
+  required: ['manufacturer_id', 'mpn'],
+} satisfies JsonSchemaNode
+
+const importParameters = {
+  ...componentParameters,
+  properties: {
+    ...componentParameters.properties,
+    projectDir: { type: 'string', description: 'Existing KiCad project directory inside this session workspace; defaults to the workspace root.' },
+  },
+} satisfies JsonSchemaNode
+
 const builderCompatibilitySchema = { type: 'object', additionalProperties: false, properties: {
   status: { type: 'string', enum: ['ready', 'unsupported_units'] },
   availableUnits: { type: 'array', items: { type: 'integer' } }, nextAction: { type: 'string' },
@@ -35,17 +54,7 @@ export function createKicadLibraryTools(ctx: Context, config: Config): ToolDefin
   const modelsTool: ToolDefinition = {
     name: 'get_kicad_component_models',
     description: 'Get a parsed, read-only KiCad symbol and footprint summary for an exact manufacturer ID and MPN returned by search_hqsch_parts. Source files are fetched in memory only, not saved. Pin-to-pad compatibility is NOT checked.',
-    parameters: {
-      type: 'object',
-      additionalProperties: false,
-      properties: {
-        manufacturer_id: { type: 'string', description: 'Manufacturer ID: use manufacturer.id from search_hqsch_parts.' },
-        mfgId: { type: 'string', description: 'Legacy alias of manufacturer_id. Prefer manufacturer_id from search_hqsch_parts.' },
-        mpn: { type: 'string', description: 'Exact manufacturer part number from the same candidate.' },
-      },
-      required: ['mpn'],
-      anyOf: [{ required: ['manufacturer_id'] }, { required: ['mfgId'] }],
-    },
+    parameters: componentParameters,
     output: {
       schema: {
         type: 'object',
@@ -129,18 +138,7 @@ export function createKicadLibraryTools(ctx: Context, config: Config): ToolDefin
   const importTool: ToolDefinition = {
     name: 'import_kicad_symbol',
     description: 'Import one selected Huaqiu KiCad Symbol into an existing project directory inside the current session workspace. Creates a dedicated .kicad_sym library and registers it in that project\'s sym-lib-table. Upstream Symbol text is checked for balanced parentheses; when exactly one trailing ")" is extra that single provable shape is repaired and reported as symbolTextRepaired, while any other imbalance is refused. Never overwrites a different existing library. Returns builderCompatibility with availableUnits and nextAction before scripted placement. This is a format check, not a part/pin/package match. Does not import a footprint or modify a schematic.',
-    parameters: {
-      type: 'object',
-      additionalProperties: false,
-      properties: {
-        manufacturer_id: { type: 'string', description: 'Manufacturer ID: use manufacturer.id from search_hqsch_parts.' },
-        mfgId: { type: 'string', description: 'Legacy alias of manufacturer_id.' },
-        mpn: { type: 'string', description: 'Exact MPN from the same candidate.' },
-        projectDir: { type: 'string', description: 'Existing KiCad project directory inside this session workspace; defaults to the workspace root.' },
-      },
-      required: ['mpn'],
-      anyOf: [{ required: ['manufacturer_id'] }, { required: ['mfgId'] }],
-    },
+    parameters: importParameters,
     output: {
       schema: {
         type: 'object',
@@ -183,16 +181,7 @@ export function createKicadLibraryTools(ctx: Context, config: Config): ToolDefin
   const datasheetTool: ToolDefinition = {
     name: 'get_kicad_datasheet',
     description: 'Read datasheet information for one exact IC selected by search_hqsch_parts. Returns bounded structured sections and original HTTPS application-image links; if structured text is absent, returns bounded PDF text. Image links are not image content, and PDF text may omit tables or diagrams. Do not infer unreported electrical parameters.',
-    parameters: {
-      type: 'object', additionalProperties: false,
-      properties: {
-        manufacturer_id: { type: 'string', description: 'Manufacturer ID: use manufacturer.id from search_hqsch_parts.' },
-        mfgId: { type: 'string', description: 'Legacy alias of manufacturer_id.' },
-        mpn: { type: 'string', description: 'Exact MPN from the same component candidate.' },
-      },
-      required: ['mpn'],
-      anyOf: [{ required: ['manufacturer_id'] }, { required: ['mfgId'] }],
-    },
+    parameters: componentParameters,
     output: {
       schema: {
         type: 'object', additionalProperties: false,
@@ -229,7 +218,7 @@ export function createKicadLibraryTools(ctx: Context, config: Config): ToolDefin
   const componentTool: ToolDefinition = {
     name: 'import_kicad_component',
     description: 'Download and register BOTH the symbol and footprint for an exact searched component into project-local .kicad_sym and .pretty libraries, sym-lib-table and fp-lib-table. Rejects missing/invalid models, unsupported symbol units, and mismatching unique pin/pad number sets before writing. Search availability flags are not trusted. Returns verified hasSymbol/hasFootprint plus libraryPath, libId and footprintId. Pass footprintId explicitly to addSymbol as footprint. Does not place a symbol or create a PCB; number matching is not electrical or package-dimension validation. Existing different files are not overwritten. Interrupted writes can leave partial files; errors report their location.',
-    parameters: importTool.parameters,
+    parameters: importParameters,
     output: {
       schema: {
         type: 'object', additionalProperties: true,

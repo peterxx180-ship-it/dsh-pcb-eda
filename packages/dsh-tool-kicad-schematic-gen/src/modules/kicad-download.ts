@@ -4,6 +4,7 @@ import type { ToolDefinition, ToolRunContext } from '@deepseek-ai/dsh-tools'
 import type { SavedSchematic } from './download-core/save.ts'
 import { realpath } from 'node:fs/promises'
 import { apply as applyDownload, Config } from './download-core/index.ts'
+import type {AnalyzeModule, AnalysisResult} from '../schematic/module-analysis.ts'
 
 export const name = 'kicad-hq-schematic-download'
 export const inject = ['tools', 'fs', 'sandboxPolicy', 'hqEdge']
@@ -49,15 +50,16 @@ async function requireCurrentProject(hqEdge: HqEdge, exec: ToolRunContext): Prom
  * @param hqEdge - installed project service.
  * @returns a compact project-scoped tool definition.
  */
-export function adaptTool(tool: ToolDefinition, hqEdge: HqEdge | (() => HqEdge | undefined)): ToolDefinition {
+export function adaptTool(tool: ToolDefinition, hqEdge: HqEdge | (() => HqEdge | undefined), analyze?: AnalyzeModule): ToolDefinition {
   return {
     ...tool,
-    description: 'Download an HQ EDA module KiCad schematic by catalog ID into the active KiCad project directory or an existing subdirectory. The current schematic and PCB are not modified. A matching source project is saved as a separate reference file when present.',
+    description: 'Download an HQ EDA module KiCad schematic by catalog ID into the active KiCad project directory or an existing subdirectory. The current schematic and PCB are not modified. A matching source project is saved as a separate reference file when present. Automatically extracts local netlist/BOM analysis when available; inspect analysis status, then query analyze_kicad_module instead of reading entire files or guessing connections from images. Analysis failure preserves the successful download; retry analysis alone. No ERC.',
     parameters: {
       ...tool.parameters,
       properties: {
         moduleId: { type: 'string', description: 'Exact module ID from an HQ EDA catalog search result.' },
         targetDir: { type: 'string', description: 'Optional existing subdirectory of the active KiCad project.' },
+        kicadCliPath: {type: 'string', description: 'Optional known host CLI path; otherwise plugin configuration/discovery is used.'},
       },
     },
     output: {
@@ -71,6 +73,7 @@ export function adaptTool(tool: ToolDefinition, hqEdge: HqEdge | (() => HqEdge |
           sourceProjectPath: { oneOf: [{ type: 'string' }, { type: 'null' }] },
           schematicStatus: { type: 'string', enum: ['created', 'existing'] },
           sourceProjectStatus: { type: 'string', enum: ['created', 'existing', 'absent'] },
+          analysis: {type: 'object'},
           footprints:{type:'array',items:{type:'object',properties:{archiveEntry:{type:'string'},footprintPath:{type:'string'},footprintName:{type:'string'},sha256:{type:'string'}},required:['archiveEntry','footprintPath','footprintName','sha256']}},
         },
         required: ['moduleId', 'moduleName', 'schematicPath', 'sourceProjectPath', 'schematicStatus', 'sourceProjectStatus'],
@@ -88,7 +91,21 @@ export function adaptTool(tool: ToolDefinition, hqEdge: HqEdge | (() => HqEdge |
         }
       })
       try {
-        const result = await tool.execute(args, { ...exec, signal: AbortSignal.any([exec.signal, changed.signal]) }) as SavedSchematic
+        const combined = {...exec, signal: AbortSignal.any([exec.signal, changed.signal])}
+        const input = args as Record<string, unknown>
+        const kicadCliPath = input?.kicadCliPath
+        if (kicadCliPath !== undefined && (typeof kicadCliPath !== 'string' || !kicadCliPath.trim())) throw new Error('kicadCliPath must be a non-empty string')
+        const downloadArgs = input && typeof input === 'object' && !Array.isArray(input) ? Object.fromEntries(Object.entries(input).filter(([key]) => key !== 'kicadCliPath')) : args
+        const result = await tool.execute(downloadArgs, combined) as SavedSchematic
+        let analysis: AnalysisResult | undefined
+        if (analyze) {
+          try {analysis = (await analyze(result.schematicPath, combined, {sourceProjectPath: result.originalProjectPath ?? undefined, kicadCliPath: kicadCliPath as string | undefined})).analysis}
+          catch (error) {
+            combined.signal.throwIfAborted()
+            analysis = {status: 'unavailable', cached: false, diagnostics: [String(error).slice(0, 1600)],
+              nextAction: 'Download succeeded. Correct diagnostics, then call analyze_kicad_module with schematicPath and view:summary; do not download again.'}
+          }
+        }
         return {
           moduleId: result.moduleId,
           moduleName: result.moduleName,
@@ -97,6 +114,7 @@ export function adaptTool(tool: ToolDefinition, hqEdge: HqEdge | (() => HqEdge |
           schematicStatus: result.status,
           sourceProjectStatus: result.originalProjectStatus,
           footprints: result.footprints,
+          ...(analysis ? {analysis} : {}),
         }
       } finally {
         unsubscribe()

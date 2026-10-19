@@ -16,6 +16,7 @@ import { buildProject } from './project.ts'
 import { children, parse, value } from './sexpr.ts'
 import { buildFlatCopy, listFlatObjects, loadFlatTemplates, summarizeFlatLayout } from './flat.ts'
 import { parseFlatRequest } from './flat-input.ts'
+import {inspectPinConnections} from './connections.ts'
 import {createOverview,registerOverview} from './overview.ts'
 import {previewConfig} from './preview-config.ts'
 import {auditFootprints} from './footprint-links.ts'
@@ -459,9 +460,11 @@ export function registerSchematicTools(ctx: Context, config: Config): void {
   }
   const flat: ToolDefinition = {
     name: 'edit_kicad_flat_schematic',
-    description: 'List editable objects, pin coordinates, embedded PNG placement, and conservative layout bounds, or create an edited copy of a single-sheet KiCad schematic. Use list for UUIDs and geometry instead of reading line ranges or measuring pixels. Create supports explicit deletions, value/label edits, orthogonal wires, and frames. Prefer frames with autoBounds:true and omit start/end; bounds are calculated after edits, including retained images and visible text. Automatic frames exclude old rectangles by default; objectUuids selects a module and excludeUuids omits decoration from its bounds without deleting it. Use manual start/end when boundsError reports unsupported geometry. List text/text_box/image together for annotation decisions; selected removeTextUuids accepts only plain text/text_box, while selected image UUIDs use removeUuids. Retain necessary notes and use short replacement titles/descriptions. Wires around deleted components need explicit selection. targetDir is an existing design root; unused outputs go under schematic/. The source is preserved. No placement, routing, connectivity audit, ERC, or netlist export.',
+    description: 'Adapt a single-sheet schematic during implementation: read geometry/UUIDs or create an edited copy. During design planning use analyze_kicad_module for components, BOM and electrical nets; do not routinely call this tool or duplicate available results. Planning reads need a specific unanswered question, such as a missing drawing note; use list with types/references. Defer geometry queries and create until implementation. List/connections are read-only. Connections requires reference and pin number, follows visible wires only, not label aliases, hidden power or hierarchy. List returns objects, pin coordinates, image placement and conservative bounds. Create supports deletions, value/label edits, explicit orthogonal wires and frames; no new/moved symbols or automatic routing. Prefer frames autoBounds:true without start/end; objectUuids selects content, excludeUuids omits retained decoration from bounds. Use manual bounds for unsupported geometry. removeTextUuids only accepts text/text_box; images use removeUuids. Preserve necessary notes; select wires around deleted symbols explicitly. targetDir must exist; new outputs go under schematic/, preserving the source. No ERC or connectivity audit.',
     parameters: { type: 'object', additionalProperties: false, properties: {
-      action: { type: 'string', enum: ['list', 'create'] }, sourcePath: { type: 'string' },
+      action: { type: 'string', enum: ['list', 'connections', 'create'] }, sourcePath: { type: 'string' },
+      references: {type: 'array', items: {type: 'string'}, description: 'List only selected symbol references.'},
+      reference: {type: 'string', description: 'connections: exact placed reference'}, pin: {type: 'string', description: 'connections: pin number, not name'},
       offset: { type: 'integer' }, types: { type: 'array', items: { type: 'string' } },
       targetDir: { type: 'string' }, projectName: { type: 'string' },
       removeReferences: { type: 'array', items: { type: 'string' } },
@@ -485,6 +488,7 @@ export function registerSchematicTools(ctx: Context, config: Config): void {
           { required: ['autoBounds'], properties: { autoBounds: { const: true } } }] } },
     }, required: ['action', 'sourcePath'] },
     output: { schema: { type: 'object', additionalProperties: false, properties: {
+      sha256: {type: 'string'}, connection: {type: 'object'},
       status: { type: 'string' }, sourcePath: { type: 'string' }, totalObjects: { type: 'integer' },
       nextOffset: { oneOf: [{ type: 'integer' }, { type: 'null' }] },
       objects: { type: 'array', items: { type: 'object' } }, schematicPath: { type: 'string' }, projectPath: { type: 'string' },
@@ -499,14 +503,24 @@ export function registerSchematicTools(ctx: Context, config: Config): void {
         const workspace = workspaceRoot(exec.agent)
         const source = await readWorkspaceSchematic(ctx.fs, workspace, request.sourcePath, config.maxSchematicBytes, exec.signal)
         sourcePath = source.path
+        const sha256 = createHash('sha256').update(source.text).digest('hex')
+        if (request.action === 'connections') {
+          const {objects, ...connection} = inspectPinConnections(listFlatObjects(source.text), request.reference, request.pin)
+          const next = request.offset + request.limit
+          return {status: 'connected', sourcePath: source.path, sha256, connection,
+            objects: objects.slice(request.offset, next), totalObjects: objects.length,
+            nextOffset: next < objects.length ? next : null,
+            nextAction: 'Reuse this result; inspect limitations/diagnostics. Visible wires only, not complete electrical nets: use analyze_kicad_module for electrical questions. Only when implementing an edit, use target.endpoint or coordinates with explicit via points. Refresh geometry if the source changes. No ERC.'}
+        }
         if (request.action === 'list') {
           const allObjects = listFlatObjects(source.text, flatTemplates.style)
           const objects = allObjects.filter(item => request.types.length === 0 || request.types.includes(item.type))
+            .filter(item => request.references.length === 0 || (item.reference !== undefined && request.references.includes(item.reference)))
           const next = request.offset + request.limit
-          return { status: 'listed', sourcePath: source.path, totalObjects: objects.length,
+          return { status: 'listed', sourcePath: source.path, sha256, totalObjects: objects.length,
             objects: objects.slice(request.offset, next), nextOffset: next < objects.length ? next : null,
             layout: summarizeFlatLayout(allObjects, flatTemplates.style),
-            nextAction: 'Use returned UUIDs and geometry. Prefer frames with autoBounds:true; creation recalculates bounds after edits. PNG size is already in mm; do not extract images or scan pixels for frame placement. Fetch nextOffset only if needed. Bounds estimate layout, not electrical connectivity; inspect one final preview.' }
+            nextAction: 'Reuse the requested information; fetch nextOffset only if needed. Planning reads do not require an edited copy. Only when implementing edits, use these UUIDs/coordinates and prefer frames autoBounds:true. Image sizes are in mm; bounds describe layout, not electrical connectivity.' }
         }
         const files = buildFlatCopy(source.text, request.projectName, request.plan, flatTemplates)
         const directory = await ctx.fs.resolve(request.targetDir, { cwd: workspace, signal: exec.signal })
@@ -531,7 +545,12 @@ export function registerSchematicTools(ctx: Context, config: Config): void {
           nextAction: 'Correct the listed selector, cache, wire path, or output name before retrying. Do not use line-number deletion or write a temporary parser. A publication error may leave preceding files; inspect reported paths.' }), { cause: error })
       }
     },
-    presentCall: args => ({ card: 'generic', title: 'Edit KiCad flat schematic', kind: 'edit', rawInput: args }),
+    presentCall: args => {
+      const action = (args as {action?: string})?.action
+      return {card: 'generic', title: action === 'list' ? '读取原理图对象'
+        : action === 'connections' ? '查询局部导线连接' : '生成原理图修改副本',
+      kind: action === 'list' || action === 'connections' ? 'read' : 'edit', rawInput: args}
+    },
   }
   for (const tool of [ports, preview, hierarchy, flat]) ctx.effect(() => ctx.tools.register(tool))
 }

@@ -38,15 +38,30 @@ console.log(JSON.stringify(sch.save(outputDirectory)));
 
 本页与范例是稳定接口入口；正常项目不逐段阅读 lib/builder.js 猜测调用方式。`importModule.name` 使用 ASCII 标识符（如 `power_3v3`），中文放外框标题。先确定连接计划，再生成脚本；文档引脚表与脚本共享同一份 reference/pin/net 数据，避免末尾重新抄写与核对全部引脚。
 
-### 通用标签引出
+### 常见局部电路
 
-从 `assets/runtime.mjs` 或 builder 导入 `attachPinLabel`，替代每个项目重写 attach/wiring 函数：
+新增 LED、上拉按键、并联去耦电容时，读取 [画法索引](drawing-patterns.md) 并复用对应 ESM 范例。它们调用本页已有接口，不是额外的 builder API；位号、真实符号与引脚映射由项目提供。示例生成器只用于维护参考图，正常项目直接在功能模块内调用 place，再统一 connect。
+
+### 信号标签引出与对齐
+
+同侧信号优先批量排列，见 [左右/上下标签参考](drawing-patterns/label-alignment.md)。从 runtime.mjs 或 builder 导入：
+
+```javascript
+const {items, warnings} = attachPinLabels(region, {
+  reference: 'U1', direction: 'left',
+  pins: [{pin:'1',net:'EN'}, {pin:'2',net:'GPIO0'}],
+});
+```
+
+默认 textPosition="overWire"，名称排在引线上方/沿竖线排列；length=5.08 mm 为最短线长，按整组最长名称保守延长到公共基线；可用 alignAt 指定左右标签列的 x 或上下标签行的 y（与 target 相同坐标系）。left/right 水平，up/down 竖排；名称从外端沿引线向符号方向展开，标签锚点保持在线上。textPosition:"outside" 可恢复线外文字。名称长度不单独改变某根线长。pins 由实际符号侧边分组，不自动识别朝向、既有接线或障碍。minPitch 默认 1.8 mm；warnings 中 LABEL_LEAD_SHORT 提示指定基线太近，LABEL_PITCH_TIGHT 提示局部间距不足，应查看相关预览，不自动拉成全侧阶梯。
+
+单个需要显式转折的信号可用旧接口：
 
 ```javascript
 attachPinLabel(region, {reference:'U1',pin:'1',net:'MOT_PWM',direction:'left',length:7.62,lane:1});
 ```
 
-direction 显式选择 left/right/up/down，从真实 pin 坐标向外引出；length 为第一段长度，lane 为垂直于引出方向的整数通道，pitch 默认 2.54 mm。相邻引脚可用不同 length/lane 错列。函数不猜符号引脚朝向、不自动避障；不要给已连接到别处的引脚盲目重复加线。文字保持水平，实际空间不足时一次调整该组的通道或外框。
+旧接口保留水平文字；lane 是垂直于引出方向的整数通道，pitch 默认 2.54 mm。不自动避障，不对已接电路的引脚重复加线。两种接口都以实际 pin 坐标连接；电源、地、NC 由相应流程处理。
 
 ### 执行脚本与读取结果
 

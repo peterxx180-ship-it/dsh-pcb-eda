@@ -2,6 +2,8 @@
 
 用于已有单页图的局部编辑。程序负责解析、定位和写入；模型负责选择电路修改内容。不需要校验值、固定行号或临时解析脚本。
 
+方案阶段默认用 analyze_kicad_module 查询器件、BOM 和电气网络，不常规调用本工具。每次例外读取应针对现有分析无法回答的具体问题，例如影响选型的图纸备注；使用 list + types:["text","text_box"]，或按实际缺口选择 types/references，读到足够信息即停止。已有结果直接复用，不提前收集绘图坐标/UUID。以下几何定位、connections 和 create 操作主要用于实际原理图适配；纯方案任务不生成修改副本。list/connections 是只读操作，create 才写入新副本。
+
 ## 按需列出对象
 
 ```json
@@ -15,6 +17,18 @@
 调用 `edit_kicad_flat_schematic`。`objects` 提供对象类型、UUID 和 `bounds`（毫米，文字范围为保守估计）；符号还有引用编号、数值、libId 和准确引脚坐标，导线还有两个端点。`image` 返回 `image.pixels`、`ppi`、`scale`、毫米尺寸 `size` 和居中放置的 `bounds`，不返回图片数据。工具读取 PNG 头和分辨率，按 KiCad 10 的规则处理旧版本图与缩放，不扫描像素。`types` 可省略；支持 symbol、wire、junction、label、global_label、hierarchical_label、no_connect、text、text_box、rectangle、polyline、image。没有类型筛选时也列出其它有 UUID 的顶层对象；无法测量的几何在 `boundsError` 中说明。按需使用 `nextOffset` 分页。`pinError` 表示该符号坐标无法解析，不能把未返回的引脚坐标当成已确定。此操作不核对电气连接。
 
 `layout` 汇总完整来源内容，独立于类型筛选和分页：`contentBounds`、网格对齐的 `suggestedFrame`、无法测量对象的 `issues`。默认不把旧 rectangle 图形作为外框范围依据，也不计入页面边框和标题栏；其它保留图形仍计入。这个摘要用于了解来源范围，生成时按实际修改重新计算，不需要模型手动抄写建议坐标。
+
+## 查询指定引脚的可见连接
+
+实际适配时需要准确定位复位、启动或接口的可见导线接入位置，调用同一工具；只问电气上连接到哪里时用 analyze_kicad_module 的 nets：
+
+```json
+{"action":"connections","sourcePath":"designs/ldo/sources/module.kicad_sch","reference":"U1","pin":"3"}
+```
+
+`connection.target` 给出引脚名称、实际页坐标、符号 UUID、unit 和可直接用于 `addWires.from/to` 的 `endpoint`。`objects` 分页返回与该引脚通过可见导线相连的器件引脚、导线、标签、结点和未连接标记；符号只列本次相连的引脚。电阻/电容内部不会被穿透，检查另一端时查询其另一引脚。`connection.netNames` 是接在这组导线上的标签文字，不是完整网络命名解析。同名但不相接的标签、隐式电源和其他页面不跟踪；普通内部交叉没有 junction 时不相连。查看 `limitations` 和 `diagnostics`，结果不等于 ERC 或网表验证。
+
+只要器件清单时用 analyze_kicad_module 的 components；实际编辑需要引脚坐标时，用 `list` 加 `references:["U1","R1"]`，只返回所选符号，避免列出整图。符号还包含 angle、mirror、DNP、Footprint 和引脚 electricalType。两种查询都返回来源 `sha256`；来源变更后重新查询，不沿用旧坐标/UUID。常规接线使用这些结果和 `addWires` 的引脚端点，不编写 PowerShell/正则提取坐标，不根据图片猜引脚位置。`layout` 仍汇总整页，不能当作筛选器件的局部外框。
 
 ## 一次生成工程副本
 
