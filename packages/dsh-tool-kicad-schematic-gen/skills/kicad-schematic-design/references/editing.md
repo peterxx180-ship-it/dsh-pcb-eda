@@ -61,4 +61,6 @@
 
 ## 固定模板
 
+工程配置字段、复制后改名与手动编辑注意事项见 [平铺工程文件处理](flat-project.md)。
+
 工程配置使用 [project.kicad_pro](../templates/project.kicad_pro)；矩形、标题和说明使用 [module-frame.kicad_sch.fragment](../templates/module-frame.kicad_sch.fragment)，间距与导线线宽使用 [frame-style.json](../templates/frame-style.json)。自动布局的 contentPadding、grid、textWidthFactor、textHeightFactor 都由模板配置。程序替换位置、文本及 UUID，不需要模型重新构造字段或测量图片；文字是否遮挡仍通过最终预览判断。

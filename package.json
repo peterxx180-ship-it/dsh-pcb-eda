@@ -20,8 +20,7 @@
     "publish:local": "node scripts/publish.mjs",
     "launch-dsh": "node scripts/launch-dsh.mjs",
     "update-bundled-plugins:kicad": "node scripts/update-bundled-plugins-kicad.mjs",
-    "check:local-kicad-plugins": "node packages/dsh-plugin-manager/scripts/check-local-kicad-plugins.mjs",
-    "test:kicad-image-policy": "node --test packages/dsh-tool-kicad-schematic-gen/test/image-policy.test.mjs"
+    "check:local-kicad-plugins": "node packages/dsh-plugin-manager/scripts/check-local-kicad-plugins.mjs"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
