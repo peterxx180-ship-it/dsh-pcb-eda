@@ -6,4 +6,4 @@
 
 parts.resistor 和 parts.button 都提供 pins.top/bottom；angle 对应实际竖向引脚。仅用于已确认的有效低输入，阻值、输入容限和消抖由设计决定。不把它自动解释为任意芯片的启动或复位电路；本例不自动添加 RC。
 
-[代码](../../assets/drawing-patterns/pullup-button.mjs) · [参考图](../../assets/drawing-patterns/pullup-button.png)。返回 signal 为按键上端的真实引脚。
+[代码](../../assets/drawing-patterns/circuits/pullup-button.mjs) · [参考图](../../assets/drawing-patterns/images/pullup-button.png)。返回 signal 为按键上端的真实引脚。

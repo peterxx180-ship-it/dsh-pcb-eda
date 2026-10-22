@@ -53,7 +53,10 @@ test('over-wire labels face inward from aligned outer ends with room for the lon
   assert.equal(f.wires[0]!.to[axis],f.wires[1]!.to[axis])
   assert.ok(Math.abs(f.wires[0]!.to[axis]-30)>=11*1.27+2.54-1e-6)
   assert.equal(f.labels[0]!.angle,angle)
-  assert.ok(Math.abs(f.labels[0]!.at[axis]-f.wires[0]!.to[axis]-(negative?1.27:-1.27))<1e-6)
+  for (const [i, item] of result.items.entries()) {
+   assert.deepEqual(f.labels[i]!.at, f.wires[i]!.to)
+   assert.deepEqual(item.at, item.end)
+  }
  }
 })
 test('explicit short baselines report text overflow instead of silently changing the requested line',()=>{

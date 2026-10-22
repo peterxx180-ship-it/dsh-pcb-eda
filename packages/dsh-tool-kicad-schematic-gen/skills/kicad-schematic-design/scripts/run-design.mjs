@@ -14,7 +14,17 @@ const result=spawnSync(process.execPath,[resolve(script),resolve(output),...extr
 const reportPath=resolve(report);mkdirSync(dirname(reportPath),{recursive:true});
 const durationMs=Math.round(performance.now()-started);
 let summary=null;
-try{const data=JSON.parse(result.stdout);summary={schematicPath:data.schematicPath??null,projectPath:data.projectPath??null,frames:Array.isArray(data.frames)?data.frames.length:null,layoutWarnings:Array.isArray(data.layoutWarnings)?data.layoutWarnings.length:null,powerSymbols:data.powerSymbols??null}}catch{}
+try {
+ const data=JSON.parse(result.stdout);
+ // Show actionable names/bounds once; complete output stays in the report file.
+ const compact=items=>Array.isArray(items)?{total:items.length,items:items.slice(0,6),truncated:items.length>6}:null;
+ summary={schematicPath:data.schematicPath??null,projectPath:data.projectPath??null,
+  frames:Array.isArray(data.frames)?data.frames.length:null,
+  layoutWarnings:Array.isArray(data.layoutWarnings)?data.layoutWarnings.length:null,
+  diagnostics:{frames:compact(data.layout?.issues),power:compact(data.layoutWarnings),unresolvedPower:compact(data.powerDiagnostics?.unresolved)},
+  powerSymbols:data.powerSymbols??null,
+  grid:data.grid?{step:data.grid.step,total:data.grid.total,counts:data.grid.counts,truncated:data.grid.truncated}:null};
+}catch{}
 writeFileSync(reportPath,JSON.stringify({exitCode:result.status,durationMs,signal:result.signal,error:result.error?.message??null,summary,stdout:result.stdout??'',stderr:result.stderr??''},null,2)+'\n','utf8');
 console.log(JSON.stringify({exitCode:result.status,durationMs,reportPath,summary,error:result.error?.message??null,stderrTail:(result.stderr??'').slice(-3000)}));
 process.exitCode=result.status??1;

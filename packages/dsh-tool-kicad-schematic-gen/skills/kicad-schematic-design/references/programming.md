@@ -34,6 +34,10 @@ if (!outputDirectory) throw new Error('usage: node design.mjs <absolute-output-d
 console.log(JSON.stringify(sch.save(outputDirectory)));
 ```
 
+## 电气格点
+
+新设计使用 [电气格点参考](electrical-grid.md) 的 sch.snap / region.snap 规划位置，并读取 save.grid。gridStep 默认1.27 mm，只诊断、不隐式移动已有对象；真实引脚和相连导线不得分别吸附。
+
 ## 接口
 
 本页与范例是稳定接口入口；正常项目不逐段阅读 lib/builder.js 猜测调用方式。`importModule.name` 使用 ASCII 标识符（如 `power_3v3`），中文放外框标题。先确定连接计划，再生成脚本；文档引脚表与脚本共享同一份 reference/pin/net 数据，避免末尾重新抄写与核对全部引脚。
@@ -79,7 +83,7 @@ node <skill目录>/scripts/run-design.mjs <design.mjs绝对路径> <唯一候选
 
 所有坐标单位为毫米；库内符号 Y 轴转换和正交旋转由程序完成。不要自己用图片坐标猜引脚位置。
 
-- `addSymbol({libraryPath,libId,reference,at,value?,angle?,mirror?,unit?,footprint?,referenceAt?,valueAt?})`：库文件必须含实际符号定义。`libId` 为 `库名:符号名`，例如 `Device:R`。默认角度 0、unit 1、无镜像，默认值和封装来自符号库，referenceAt/valueAt 可指定水平文字的绝对位置，省略时放在器件上方；返回对象 UUID。同一引用的不同 unit 要使用相同符号；重复 reference/unit、缓存差异或缺少 unit 会报错。
+- `addSymbol({libraryPath,libId,reference,at,value?,angle?,mirror?,unit?,footprint?,referenceAt?,valueAt?,fieldJustify?})`：库文件必须含实际符号定义。`libId` 为 `库名:符号名`，例如 `Device:R`。默认角度 0、unit 1、无镜像，默认值和封装来自符号库，referenceAt/valueAt 可指定水平文字的绝对位置，省略时放在器件上方；返回对象 UUID。同一引用的不同 unit 要使用相同符号；重复 reference/unit、缓存差异或缺少 unit 会报错。
 - `pin(reference,number)`：返回 `[x,y]`；不存在或多 unit 中无法唯一匹配的引脚报错。实例放置后再查询。点数组和 `{reference,pin}` 均可作为下面接口的端点。
 - `wire(from,to,via=[])`：返回每段导线 UUID。所有线段必须非零且正交；折点由模型给出。分支相连处显式添加 junction，不自动生成。
 - `label(name,at,angle=0)`：写本页局部网络标签，返回 UUID。同名局部标签表示同一页网络；标签要位于预期引脚或导线上，跨功能组可用短导线和标签连接，避免大段交叉线。
@@ -111,7 +115,7 @@ designs/<name>/
 
 ## 先规划外框，再放置电路
 
-先在脚本顶部定义各分区的 origin/size。所有 region 在放置器件之前注册，可即时发现预定框重叠；这个检查只涉及矩形布局，不检查电气连接。region 自动添加一个固定外框、标题和说明，不需要再调用 frame。尺寸由模型根据主要器件和接口估计，采用对齐行列与明确间距，保留标题、说明和跨区通道。库不会自动决定框尺寸、分区、移动内容或检查内容越界；最后一次预览确认。
+先在脚本顶部定义各分区的 origin/size。所有 region 在放置器件之前注册，可即时发现预定框重叠；这个检查只涉及矩形布局，不检查电气连接。region 自动添加一个固定外框、标题和说明，不需要再调用 frame。尺寸由模型根据主要器件和接口估计，采用对齐行列与明确间距，保留标题、说明和跨区通道。放置器件并注册来源框后、布线前调用 sch.layoutReport()：检查来源 autoBounds 框和新 region 的重叠与页面范围，报告双方名称和 bounds，不自动移动内容。保存结果的 layout 包含同一报告；它不检查所有框内文字越界，仍需预览确认。
 
 `sch.region({name,description,origin:[x,y],size:[width,height]})` 返回区域操作对象：addSymbol 的 at/referenceAt/valueAt、wire 的数组端点和 via、label/marker 的数组位置全部使用区域相对坐标。`region.pin(reference,number)` 返回相对坐标；`region.at([x,y])` 转为全局坐标。`sch.pin` 仍返回全局坐标，不要把它的返回值直接传给区域方法。`{reference,pin}` 端点由全局实际实例定位，区域方法无需自行换算。
 
@@ -121,8 +125,23 @@ designs/<name>/
 
 ## 标准电源符号与当前标签查询
 
-共享电源网络在 Schematic 构造选项里声明 `requiredPowerSymbols: powerNets`。导入模块/补充标签后先用 `sch.planPowerPlacements({libraryPath: POWER_LIB, nets: powerNets})` 批量规划，再把返回的 placements 交给 replacePowerLabels。需要修正的少量位置用 `sch.powerLabelCatalog(Object.keys(powerNets))` 按 module、net、at 选取当前标签，覆盖对应 plan.placements；不要硬编码上一轮 UUID 或把所有 angle 固定为 0。保存前转换为标准符号并检查 `sch.checkPowerSymbols()`；render/save 同样自动检查声明的网络。详细示例与错误处理见 [电源符号交付](power-symbols.md)。
+共享电源网络在 Schematic 构造选项里声明 `requiredPowerSymbols: powerNets`。导入模块/补充标签后先用 `sch.planPowerPlacements({libraryPath: POWER_LIB, nets: powerNets})` 批量规划，再把返回的 placements 交给 replacePowerLabels。需要修正的少量位置用 `sch.powerLabelCatalog(Object.keys(powerNets))` 按 module、net、at 选取当前标签，覆盖对应 plan.placements；不要硬编码上一轮 UUID 或把所有 angle 固定为 0。平铺新图使用 powerStyle:'mixed'，保留位置以 keepLabels 传给规划和转换；其余位置转换并检查 `sch.checkPowerSymbols()`；render/save 同样自动检查声明的网络。详细示例与错误处理见 [电源符号交付](power-symbols.md)。
 
 `sch.pinCatalog()` 返回当前符号的引用、单元、实际毫米引脚坐标与 pinError，包含旋转、镜像和导入平移。它是符号目录，不包含标签；标签定位用 powerLabelCatalog。布线继续使用 sch.pin，不需要读取实现或自写解析器。
 
 sch.save 返回 schematicPath、projectPath、frames 和 layoutWarnings。一次保存后打印这些结果，不为查坐标重复生成。layoutWarnings / sch.powerLayoutWarnings() 是电源符号与文字、器件、导线外接框交叠的保守提示，排除直接连接的导线接点，可能误报或漏报，不证明电气连接。先调整 valueAt，再按需要移动符号并连接原接点；局部预览确认可读性。
+
+器件属性可用 `fieldJustify:"left"|"right"|"center"`（默认 center）设置位号与数值的文字对齐。右侧属性优先 left，并按符号外形预留约1.27–2.54 mm净空；参考中的小型阻容文字锚点距器件原点3.81 mm，上下偏移±1.27 mm。横向器件可将属性居中放在上方，不固定把文字推到远处。长值向外延伸，不能因短位号/长型号不同而改变同列文字起点。
+
+器件方向与短直标签优先级见 [通用绘图规则](drawing-rules.md)，symbolOrientation 在放置前根据真实引脚角色返回角度，不根据器件原点猜方向。
+
+## 构建收敛与清理
+
+按 [减少生成返工](build-convergence.md) 统一局部坐标、字段角度、混合电源表达和每轮验收。run-design.mjs 的 summary.diagnostics 提供有数量上限的问题明细，完整输出留在报告；不为查看警告重新构建。清理只针对本轮候选和明确的临时文件，不能删除 scripts/modules/shared 或入口依赖的来源工作副本。
+# 器件声明接口补充
+
+现有 Schematic/region 接口保持兼容。批量放置并声明引脚网络可使用 `ConnectedSchematic`，多页工程可使用 `SchematicProject`；`addSymbol` 新增可选 `dnp`、隐藏字符串属性 `properties` 和稳定器件身份 `key`。完整参数、明确 NC/manual、局部标签范围与层次重编号说明见 [器件连接声明与多页工程](declarative-design.md)。
+
+## 局部直接连线检查
+
+`sch.localConnectionsReport([{name,from:{reference,pin},to:{reference,pin}}])` 检查指定引脚对之间的导线端点通路，不能被同名标签满足。connect 后调用，返回 scope/total/failed/checks/truncated；报告失败先修局部路径，最多40项且失败优先。只查明确局部关系，不穿越器件内部，不能替代实际 KiCad 网表；具体使用见 [局部连线与验收](local-circuit-layout.md)。

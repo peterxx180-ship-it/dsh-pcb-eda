@@ -28,6 +28,9 @@ sch.frame({ name: spec.sourceTitle, description: spec.sourceDescription,
   autoBounds: true, objectUuids: imported.objectUuids });
 const region = sch.region(spec.loadRegion);
 const load = place({ region, part: spec.resistor, allocateReference, groundNet: spec.groundNet });
+// Resolve the imported auto-frame together with new regions before routing.
+const layout = sch.layoutReport();
+if (layout.total) throw new Error(`Adjust source/load frame placement: ${JSON.stringify(layout.issues)}`);
 load.connect();
 const anchors = imported.ports[spec.signalPort];
 if (!anchors || anchors.length !== 1) throw new Error('Choose one explicit source signal anchor; a missing or repeated port needs a deliberate connection plan');

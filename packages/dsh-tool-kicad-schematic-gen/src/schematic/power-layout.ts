@@ -7,11 +7,12 @@ export interface PowerPlacementPlan {
   placements: NonNullable<PowerLabelSpec['placements']>
   diagnostics: {
     plannedCount: number; rotatedCount: number; movedCount: number; candidateCount: number
-    unresolved: Array<{ uuid: string; net: string; at: FlatPoint; obstacleUuids: string[] }>
+    unresolved: Array<{ uuid: string; net: string; at: FlatPoint; obstacleUuids: string[]
+      obstacles: Array<{ uuid: string; type: string; reference?: string; name?: string; bounds?: FlatBounds }> }>
     unmeasuredObjectUuids: string[]
   }
 }
-export interface PowerPlanningOptions extends Pick<PowerLabelSpec, 'libraryPath' | 'nets'> {
+export interface PowerPlanningOptions extends Pick<PowerLabelSpec, 'libraryPath' | 'nets' | 'keepLabels'> {
   clearanceMm?: number
   /** Maximum short cardinal lead, 0 disables movement. Default 5.08 mm. */
   maxMoveMm?: number
@@ -125,7 +126,12 @@ export function planPowerLabels(labels: PowerLabelEntry[], objects: FlatObject[]
     placed.push({ uuid: label.uuid, body: best.body, text: best.text })
     if (best.angle !== 0) diagnostics.rotatedCount++
     if (!equal(best.at, label.at)) { diagnostics.movedCount++; leads.push({ from: label.at, to: best.at }) }
-    if (best.conflicts.length) diagnostics.unresolved.push({ uuid: label.uuid, net: label.net, at: best.at, obstacleUuids: best.conflicts })
+    if (best.conflicts.length) diagnostics.unresolved.push({ uuid: label.uuid, net: label.net, at: best.at, obstacleUuids: best.conflicts,
+      obstacles: best.conflicts.map(uuid => {
+        const object = objects.find(o => o.uuid === uuid)
+        return { uuid, type: object?.type ?? 'planned-power-geometry', reference: object?.reference,
+          name: object?.name, bounds: object?.bounds }
+      }) })
   }
   return { placements, diagnostics }
 }

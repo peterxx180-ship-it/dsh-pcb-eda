@@ -9,20 +9,47 @@ import { flatTextSize } from './flat-layout.ts'
 import { normalizeCommonUnits } from './symbol-units.ts'
 import { planPowerLabels, type PowerPlanningOptions, type PowerPlacementPlan, type PowerGeometry } from './power-layout.ts'
 import {assignFootprintText} from './footprint-links.ts'
+import {snapPoint,inspectGrid,DEFAULT_SCHEMATIC_GRID} from './grid.ts'
+import {chooseOrientation,type OrientationIntent} from './orientation.ts'
+import {inspectFrameLayout} from './layout-report.ts'
+import {attachPowerAnchors} from './power-attachment.ts'
+import {inspectLocalConnections, type LocalWireConnection} from './local-connections.ts'
+export type {LocalWireConnection} from './local-connections.ts'
+import type {FlatBounds} from './flat-layout.ts'
+export type {OrientationIntent} from './orientation.ts'
 export type { PowerPlanningOptions, PowerPlacementPlan } from './power-layout.ts'
+
+/** Name-based UUIDv8; only opted-in instance IDs are stable, not whole files. */
+function stableInstanceId(project: string, key: string): string {
+  const bytes = createHash('sha256').update(JSON.stringify(['dsh-symbol-v1', project, key])).digest().subarray(0, 16)
+  bytes[6] = (bytes[6]! & 15) | 128
+  bytes[8] = (bytes[8]! & 63) | 128
+  const hex = bytes.toString('hex')
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
+}
 
 /** Explicit instance placement in millimetres; library files must be trusted project inputs. */
 export interface SymbolPlacement {
   libraryPath: string; libId: string; reference: string; at: FlatPoint
   value?: string; angle?: 0 | 90 | 180 | 270; mirror?: 'x' | 'y'; unit?: number; footprint?: string
   referenceAt?: FlatPoint; valueAt?: FlatPoint; fieldAngle?: number
+  /** Explicit field alignment for compact, consistent reference/value columns. */
+  fieldJustify?: 'left' | 'right' | 'center'
   hideReference?: boolean; hideValue?: boolean
+  /** Stable instance identity within this sheet, independent of placement and reference. */
+  key?: string
+  dnp?: boolean
+  /** Hidden instance fields; standard fields must use their dedicated options. */
+  properties?: Record<string, string>
 }
 /** Explicit deployment templates and page choice; no implicit file discovery. */
 export interface SchematicOptions {
   projectName: string; templateDir: string; paper: 'A4' | 'A3' | 'A2' | 'A1' | 'A0'; title: string
   /** Explicit shared power nets required before render/save; never inferred from names. */
   requiredPowerSymbols?: Record<string, string>
+  /** Report only; existing geometry is never silently moved. Default 1.27 mm. */
+  gridStep?: number
+  powerStyle?: 'symbols' | 'mixed'
 }
 
 /** Planned module rectangle; origin and size use sheet millimetres. */
@@ -30,11 +57,19 @@ export interface ModuleRegionSpec { name: string; description: string; origin: F
 
 /** Explicit shared-net conversion; library Value must equal each selected network name. */
 export interface PowerLabelSpec {
+  /** Current-build UUIDs retained as labels when powerStyle is mixed. */
+  keepLabels?: string[]
   libraryPath: string; nets: Record<string, string>
   placements?: Record<string, { at: FlatPoint; via?: FlatPoint[]; angle?: 0 | 90 | 180 | 270; valueAt?: FlatPoint }>
 }
 /** Conservative power-symbol overlap hint; not an electrical check. */
-export interface PowerLayoutWarning { code: 'POWER_LAYOUT_OVERLAP'; uuid: string; reference: string; otherUuid: string; otherType: string }
+export interface PowerLayoutWarning {
+  code: 'POWER_LAYOUT_OVERLAP'; uuid: string; reference: string; otherUuid: string; otherType: string
+  otherReference?: string; otherName?: string
+  bounds: FlatBounds; otherBounds: FlatBounds
+  /** Object unions include visible fields/pin text; verify the suspected overlap in preview. */
+  measurement: 'conservative-object-bounds'
+}
 /** Converted label identity and final symbol pin position; explicit movement adds connected wire segments. */
 export interface PowerLabelReplacement { uuid: string; reference: string; net: string; libId: string; at: FlatPoint }
 /** Current-build label identity and sheet coordinates; module identifies imported provenance. */
@@ -56,6 +91,13 @@ export class ModuleRegion {
    * @param local Millimetres from the region's top-left. @returns Sheet coordinate.
    */
   at(local: FlatPoint): FlatPoint { const p = point(local); return [this.origin[0] + p[0], this.origin[1] + p[1]] }
+  /** Snap a planned local placement on the global electrical grid, before wiring. */
+  snap(local:FlatPoint):FlatPoint {
+    const p=this.schematic.snap(this.at(local));return [p[0]-this.origin[0],p[1]-this.origin[1]]
+  }
+  symbolOrientation(spec:Pick<SymbolPlacement,'libraryPath'|'libId'|'unit'|'mirror'|'angle'>,intent:OrientationIntent):0|90|180|270 {
+    return this.schematic.symbolOrientation(spec,intent)
+  }
   /** Place an instance with region-relative position and explicit property anchors.
    * @param spec Actual symbol and local placement. @returns Instance UUID.
    */
@@ -70,13 +112,16 @@ export class ModuleRegion {
   pin(reference: string, number: string): FlatPoint {
     const p = this.schematic.pin(reference, number); return [p[0] - this.origin[0], p[1] - this.origin[1]]
   }
-  private endpoint(input: FlatEndpoint): FlatEndpoint { return Array.isArray(input) ? this.at(input) : input }
+  private endpoint(input: FlatEndpoint, context = 'region endpoint'): FlatEndpoint {
+    return Array.isArray(input) ? this.at(point(input, context)) : checkedEndpoint(input, context)
+  }
   /** Route local points or named pins through local explicit bends.
    * @param from Local point or pin. @param to Local point or pin. @param via Local bends.
    * @returns Segment UUIDs.
    */
   wire(from: FlatEndpoint, to: FlatEndpoint, via: FlatPoint[] = []): string[] {
-    return this.schematic.wire(this.endpoint(from), this.endpoint(to), via.map(p => this.at(p)))
+    return this.schematic.wire(this.endpoint(from, 'region.wire.from'), this.endpoint(to, 'region.wire.to'),
+      via.map((p, i) => this.at(point(p, `region.wire.via[${i}]`))))
   }
   /** Add a local network label.
    * @param name Network name. @param at Local point or pin. @param angle Orthogonal angle. @returns UUID.
@@ -97,9 +142,17 @@ export class ModuleRegion {
   }
 }
 
-function point(at: FlatPoint): FlatPoint {
-  if (at.length !== 2 || at.some(n => !Number.isFinite(n))) throw new Error('coordinates require two finite millimetre values')
+function point(at: FlatPoint, context = 'coordinates'): FlatPoint {
+  if (!Array.isArray(at) || at.length !== 2 || at.some(n => !Number.isFinite(n))) {
+    throw new Error(`${context}: coordinates require two finite millimetre values [x, y]; received ${JSON.stringify(at)}. Use region.pin for local points, sch.pin for sheet points.`)
+  }
   return at
+}
+function checkedEndpoint(input: FlatEndpoint, context: string): FlatEndpoint {
+  if (!input || typeof input !== 'object' || Array.isArray(input) || typeof input.reference !== 'string' || typeof input.pin !== 'string') {
+    throw new Error(`${context}: expected [x, y] or {reference, pin}; received ${JSON.stringify(input)}`)
+  }
+  return input
 }
 function definition(source: string, name: string, chain: string[] = []): string {
   const root = parse(source)
@@ -216,6 +269,7 @@ export class Schematic {
   private readonly instances: string[] = []
   private readonly graphics: string[] = []
   private readonly references = new Map<string, string>()
+  private readonly instanceKeys = new Set<string>()
   private placedPins: ReturnType<typeof listFlatObjects> | undefined
   private readonly frames: FlatFrame[] = []
   private readonly regions: Array<{ name: string; start: FlatPoint; end: FlatPoint }> = []
@@ -225,6 +279,8 @@ export class Schematic {
   private readonly templates: ReturnType<typeof loadFlatTemplates>
   /** Load validated templates. @param options Project identity, page and template directory. */
   constructor(private readonly options: SchematicOptions) {
+    if(options.powerStyle!==undefined&&!['symbols','mixed'].includes(options.powerStyle))throw new Error('powerStyle must be symbols or mixed')
+    snapPoint([0,0],options.gridStep??DEFAULT_SCHEMATIC_GRID)
     if (!/^[A-Za-z0-9][A-Za-z0-9_-]*$/u.test(options.projectName)) throw new Error('projectName must be an ASCII filename without an extension')
     if (!['A4', 'A3', 'A2', 'A1', 'A0'].includes(options.paper)) throw new Error('unsupported paper size')
     this.requiredPowerSymbols = { ...options.requiredPowerSymbols }
@@ -234,6 +290,26 @@ export class Schematic {
       }
     }
     this.templates = loadFlatTemplates(options.templateDir)
+  }
+  /** Use for planned symbol positions, region origins and free routing channels, never real pin endpoints. */
+  snap(at:FlatPoint):FlatPoint {return snapPoint(at,this.options.gridStep??DEFAULT_SCHEMATIC_GRID)}
+  /** Choose rotation before placing a part, using real pin positions/directions. No sheet mutation. */
+  symbolOrientation(spec:Pick<SymbolPlacement,'libraryPath'|'libId'|'unit'|'mirror'|'angle'>,intent:OrientationIntent):0|90|180|270 {
+    const separator=spec.libId.indexOf(':')
+    if(separator<1)throw new Error('libId requires Library:Symbol')
+    const source=normalizeCommonUnits(definition(readFileSync(spec.libraryPath,'utf8'),spec.libId.slice(separator+1)))
+    return chooseOrientation(source,intent,spec.unit??1,spec.mirror,spec.angle??0)
+  }
+  /** Report off-grid electrical objects and pins without changing connectivity. */
+  gridReport():ReturnType<typeof inspectGrid> {
+    return inspectGrid(listFlatObjects(this.source()),this.options.gridStep??DEFAULT_SCHEMATIC_GRID)
+  }
+  /** Check explicitly planned local connections using wire endpoints only. Labels cannot satisfy a pair.
+   * Call after connect(); use real pin pairs, not a whole series chain across component internals.
+   * Report only; a pass does not replace the exported KiCad netlist or ERC.
+   */
+  localConnectionsReport(connections: LocalWireConnection[]): ReturnType<typeof inspectLocalConnections> {
+    return inspectLocalConnections(listFlatObjects(this.source()), connections, endpoint => this.endpoint(endpoint))
   }
   /** Reserve a non-overlapping fixed module frame before placing its circuit.
    * @param spec Model-planned size, origin, title and explanation.
@@ -301,6 +377,14 @@ export class Schematic {
    */
   addSymbol(spec: SymbolPlacement): string {
     this.placedPins = undefined
+    if (spec.dnp !== undefined && typeof spec.dnp !== 'boolean') throw new Error('dnp must be boolean')
+    if (spec.key !== undefined && (typeof spec.key !== 'string' || !spec.key.trim() || this.instanceKeys.has(spec.key))) throw new Error('key must be a unique nonempty instance key')
+    if (spec.properties !== undefined && (!spec.properties || typeof spec.properties !== 'object' || Array.isArray(spec.properties))) throw new Error('properties must be a string field map')
+    const fields = Object.entries(spec.properties ?? {})
+    for (const [name, text] of fields) {
+      if (!name.trim() || ['Reference', 'Value', 'Footprint', 'Datasheet'].includes(name) || typeof text !== 'string') throw new Error(`invalid custom property: ${name}`)
+    }
+    if(spec.fieldJustify!==undefined&&!['left','right','center'].includes(spec.fieldJustify))throw new Error('fieldJustify must be left, right or center')
     const at = point(spec.at), angle = spec.angle ?? 0, unit = spec.unit ?? 1
     if (!/^[A-Za-z#][A-Za-z0-9_]*\d+$/u.test(spec.reference)) throw new Error(`invalid reference: ${spec.reference}`)
     if (![0, 90, 180, 270].includes(angle) || !Number.isInteger(unit) || unit < 1) throw new Error(`invalid angle or unit for ${spec.reference}`)
@@ -339,18 +423,20 @@ export class Schematic {
     }
     const val = spec.value ?? (defaultProperty('Value') ? value(defaultProperty('Value')!, 2) : symbolName)
     const footprint = spec.footprint ?? (defaultProperty('Footprint') ? value(defaultProperty('Footprint')!, 2) : '')
-    const uuid = randomUUID()
+    const uuid = spec.key === undefined ? randomUUID() : stableInstanceId(this.options.projectName, spec.key)
     const anchors = fieldAnchors(sections, unit, at, angle, spec.mirror, children(form, 'power').length > 0)
     const referenceAt = point(spec.referenceAt ?? (anchors ? anchors[0] : [at[0], at[1] - 5.08]))
     const valueAt = point(spec.valueAt ?? (anchors ? anchors[1] : [at[0], at[1] - 2.54]))
     const fieldAngle = spec.fieldAngle ?? ([90, 270].includes(angle) ? 90 : 0)
-    const property = (name: string, text: string, p: FlatPoint, hide = false) => `(property ${quote(name)} ${quote(text)} (at ${p[0]} ${p[1]} ${fieldAngle}) (effects (font (size 1.27 1.27))${hide ? ' (hide yes)' : ''}))`
+    const property = (name: string, text: string, p: FlatPoint, hide = false) => `(property ${quote(name)} ${quote(text)} (at ${p[0]} ${p[1]} ${fieldAngle}) (effects (font (size 1.27 1.27))${spec.fieldJustify && spec.fieldJustify !== 'center' && ['Reference','Value'].includes(name) ? ` (justify ${spec.fieldJustify})` : ''}${hide ? ' (hide yes)' : ''}))`
     this.definitions.set(spec.libId, cached)
     this.references.set(key, spec.libId)
+    if (spec.key !== undefined) this.instanceKeys.add(spec.key)
     this.instances.push(`(symbol (lib_id ${quote(spec.libId)}) (at ${at[0]} ${at[1]} ${angle}) (unit ${unit}) ${spec.mirror ? `(mirror ${spec.mirror})` : ''}
-      (in_bom yes) (on_board yes) (dnp no) (uuid ${quote(uuid)})
+      (in_bom yes) (on_board yes) (dnp ${spec.dnp ? 'yes' : 'no'}) (uuid ${quote(uuid)})
       ${property('Reference', spec.reference, referenceAt, spec.hideReference ?? hiddenProperty('Reference'))} ${property('Value', val, valueAt, spec.hideValue ?? hiddenProperty('Value'))}
       ${property('Footprint', footprint, at, true)} ${property('Datasheet', defaultProperty('Datasheet') ? value(defaultProperty('Datasheet')!, 2) : '', at, true)}
+      ${fields.map(([name, text]) => property(name, text, at, true)).join('\n')}
       (instances (project ${quote(this.options.projectName)} (path ${quote(`/${this.rootId}`)} (reference ${quote(spec.reference)}) (unit ${unit})))))`)
     return uuid
   }
@@ -375,13 +461,39 @@ export class Schematic {
     if (matches.length !== 1) throw new Error(`${reference}.${number}: expected one placed pin, found ${matches.length}`)
     return matches[0]!.at
   }
-  private endpoint(input: FlatEndpoint): FlatPoint { return Array.isArray(input) ? point(input) : this.pin(input.reference, input.pin) }
+  /** Outward lead direction from actual library pin orientation, rotation and mirror. */
+  pinDirection(reference: string, number: string): 'left' | 'right' | 'up' | 'down' {
+    this.pin(reference, number) // Reject missing/ambiguous pins before inferring a direction.
+    const root = parse(this.source())
+    const placed = this.pinCatalog().find(s => s.reference === reference && s.pins?.some(pin => pin.number === number))!
+    const instance = children(root, 'symbol').find(s => value(children(s, 'uuid')[0]!) === placed.uuid)!
+    const libId = value(children(instance, 'lib_id')[0]!)
+    const definition = children(children(root, 'lib_symbols')[0]!, 'symbol').find(s => value(s) === libId)!
+    const unit = Number(value(children(instance, 'unit')[0]!))
+    const pins = children(definition, 'symbol').flatMap(section => {
+      const suffix = /_(\d+)_(\d+)$/u.exec(value(section))
+      return suffix && [0, unit].includes(Number(suffix[1])) && [0, 1].includes(Number(suffix[2])) ? children(section, 'pin') : []
+    }).filter(pin => value(children(pin, 'number')[0]!) === number)
+    if (pins.length !== 1) throw new Error(`${reference}.${number}: ambiguous pin direction`)
+    const angle = Number(value(children(pins[0]!, 'at')[0]!, 3)) + Number(value(children(instance, 'at')[0]!, 3))
+    if (!Number.isFinite(angle) || angle % 90 !== 0) throw new Error(`${reference}.${number}: nonorthogonal pin direction`)
+    const mirror = children(instance, 'mirror')[0]
+    const axis = mirror ? value(mirror) : ''
+    const x = -Math.cos(angle * Math.PI / 180) * (axis === 'y' ? -1 : 1)
+    const y = Math.sin(angle * Math.PI / 180) * (axis === 'x' ? -1 : 1)
+    return Math.abs(x) > 0.5 ? (x < 0 ? 'left' : 'right') : (y < 0 ? 'up' : 'down')
+  }
+  private endpoint(input: FlatEndpoint): FlatPoint {
+    if (Array.isArray(input)) return point(input)
+    checkedEndpoint(input, 'schematic endpoint')
+    return this.pin(input.reference, input.pin)
+  }
   /** Add explicitly routed orthogonal wire segments; no junctions are inferred.
    * @param from Pin or coordinate. @param to Pin or coordinate. @param via Explicit intermediate bends.
    * @returns UUIDs of generated segments for frame grouping.
    */
   wire(from: FlatEndpoint, to: FlatEndpoint, via: FlatPoint[] = []): string[] {
-    const points = [this.endpoint(from), ...via.map(point), this.endpoint(to)]
+    const points = [this.endpoint(from), ...via.map((p, i) => point(p, `wire.via[${i}]`)), this.endpoint(to)]
     const segments: string[] = [], ids: string[] = []
     for (let i = 1; i < points.length; i++) {
       const a = points[i - 1]!, b = points[i]!
@@ -446,7 +558,8 @@ export class Schematic {
       }).length : 0
       return { net, libId, symbolCount, remainingLabelUuids: labels.filter(label => label.net === net).map(label => label.uuid) }
     })
-    const incomplete = statuses.filter(status => !status.symbolCount || status.remainingLabelUuids.length)
+    const incomplete = statuses.filter(status => this.options.powerStyle==='mixed'
+      ? !status.symbolCount&&!status.remainingLabelUuids.length : !status.symbolCount||status.remainingLabelUuids.length)
     if (incomplete.length) throw new Error(`POWER_SYMBOLS_REQUIRED: ${incomplete.map(status =>
       `${status.net}: ${status.symbolCount} power symbols, ${status.remainingLabelUuids.length} unconverted labels`).join('; ')}. Convert current-build labels or report the unresolved requirement; do not remove power symbols to avoid layout overlaps.`)
     return statuses
@@ -456,6 +569,7 @@ export class Schematic {
    * Unresolved conservative overlaps are returned, not presented as a clean layout.
    */
   planPowerPlacements(spec: PowerPlanningOptions): PowerPlacementPlan {
+    const selected=this.selectedPowerLabels(spec)
     const forms = powerDefinitions(spec), cache = new Map<string, PowerGeometry>()
     const geometry = (net: string, angle: 0 | 90 | 180 | 270): PowerGeometry => {
       const key = `${net}:${angle}`, existing = cache.get(key)
@@ -469,13 +583,20 @@ export class Schematic {
       return result
     }
     const pages: Record<SchematicOptions['paper'], FlatPoint> = { A4: [297, 210], A3: [420, 297], A2: [594, 420], A1: [841, 594], A0: [1189, 841] }
-    return planPowerLabels(this.powerLabelCatalog(Object.keys(spec.nets)), listFlatObjects(this.source(), this.templates.style), geometry, pages[this.options.paper], spec)
+    return planPowerLabels(selected, listFlatObjects(this.source(), this.templates.style), geometry, pages[this.options.paper], spec)
+  }
+  private selectedPowerLabels(spec:{nets:Record<string,string>;keepLabels?:string[]}):PowerLabelEntry[]{
+    const labels=this.powerLabelCatalog(Object.keys(spec.nets)),keep=spec.keepLabels??[]
+    if(keep.length&&this.options.powerStyle!=='mixed')throw new Error('POWER_LABEL_INVALID: keepLabels requires powerStyle mixed')
+    if(!Array.isArray(keep)||new Set(keep).size!==keep.length||keep.some(id=>!labels.some(l=>l.uuid===id)))throw new Error('POWER_LABEL_INVALID: keepLabels must select unique current-build mapped label UUIDs')
+    return labels.filter(l=>!keep.includes(l.uuid))
   }
   /** Replace explicitly shared local/global power labels using zero-length-pin power symbols.
    * @param spec Trusted library, exact net map and optional label-UUID placements with caller-routed bends.
    * @returns Replaced labels with retained UUIDs and network names; moved anchors receive explicit connecting wires.
    */
   replacePowerLabels(spec: PowerLabelSpec): PowerLabelReplacement[] {
+    const selected=new Set(this.selectedPowerLabels(spec).map(l=>l.uuid))
     powerDefinitions(spec)
     // Prepare every placement independently so an incompatible library leaves this sheet intact.
     const prepared = new Schematic(this.options)
@@ -485,6 +606,7 @@ export class Schematic {
     const extraWires: string[] = []
     const convertedIds = new Set<string>()
     const wireGroups = new Map<string, string[]>()
+    const attachmentAnchors: Array<{ uuid: string; at: FlatPoint }> = []
     for (const graphic of this.graphics) {
       const form = parse(graphic)
       if (!['label', 'global_label'].includes(form.head)) { retained.push(graphic); continue }
@@ -494,6 +616,8 @@ export class Schematic {
       const anchor = children(form, 'at')[0], identity = children(form, 'uuid')[0]
       if (!anchor || !identity) throw new Error(`POWER_LABEL_INVALID: ${net} needs at and uuid`)
       const at = point([Number(value(anchor, 1)), Number(value(anchor, 2))]), uuid = value(identity)
+      if(!selected.has(uuid)){retained.push(graphic);continue}
+      attachmentAnchors.push({ uuid, at })
       let reference: string
       do { counter += 1; reference = `#PWR${counter}` } while (used.has(reference))
       used.add(reference)
@@ -519,6 +643,9 @@ export class Schematic {
     for (const uuid of Object.keys(spec.placements ?? {})) {
       if (!convertedIds.has(uuid)) throw new Error(`POWER_LABEL_INVALID: placement ${uuid} does not select a mapped label`)
     }
+    // Prepare splitting before committing anything; malformed/ambiguous inputs leave the sheet intact.
+    const attached = attachPowerAnchors(retained, attachmentAnchors)
+    for (const [uuid, ids] of attached.groups) wireGroups.set(uuid, [...(wireGroups.get(uuid) ?? []), ...ids])
     for (const [id, cached] of prepared.definitions) {
       if (this.definitions.has(id) && this.definitions.get(id) !== cached) throw new Error(`inconsistent library definition: ${id}`)
     }
@@ -526,7 +653,11 @@ export class Schematic {
     for (const [key, id] of prepared.references) this.references.set(key, id)
     this.placedPins = undefined
     this.instances.push(...prepared.instances)
-    this.graphics.splice(0, this.graphics.length, ...retained, ...extraWires)
+    this.graphics.splice(0, this.graphics.length, ...attached.graphics, ...extraWires)
+    for (const [uuid, ids] of wireGroups) {
+      const module = this.objectModules.get(uuid)
+      if (module) for (const id of ids) this.objectModules.set(id, module)
+    }
     for (const frame of this.frames) {
       if (frame.autoBounds && frame.objectUuids) {
         frame.objectUuids = [...frame.objectUuids, ...frame.objectUuids.flatMap(uuid => wireGroups.get(uuid) ?? [])]
@@ -549,7 +680,9 @@ export class Schematic {
         if (other.type === 'wire' && [other.from, other.to].some(p => p && power.at && p[0] === power.at[0] && p[1] === power.at[1])) continue
         const a = power.bounds, b = other.bounds
         if (a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom) {
-          warnings.push({ code: 'POWER_LAYOUT_OVERLAP', uuid: power.uuid, reference: power.reference!, otherUuid: other.uuid, otherType: other.type })
+          warnings.push({ code: 'POWER_LAYOUT_OVERLAP', uuid: power.uuid, reference: power.reference!,
+            otherUuid: other.uuid, otherType: other.type, otherReference: other.reference, otherName: other.name,
+            bounds: a, otherBounds: b, measurement: 'conservative-object-bounds' })
         }
       }
     }
@@ -592,16 +725,27 @@ export class Schematic {
     if (!this.instances.length) throw new Error('place at least one symbol before rendering')
     return buildFlatCopy(this.source(), this.options.projectName, { removeReferences: [], removeUuids: [], removeTextUuids: [], setValues: [], setLabels: [], addWires: [], frames: this.frames }, this.templates)
   }
+  /** Inspect resolved imported and new frames after placement, before power conversion/wiring.
+   * Report only: intentional nested frames may overlap; no electrical verification is implied.
+   */
+  layoutReport(): ReturnType<typeof inspectFrameLayout> {
+    const result = buildFlatCopy(this.source(), this.options.projectName,
+      { removeReferences: [], removeUuids: [], removeTextUuids: [], setValues: [], setLabels: [], addWires: [], frames: this.frames }, this.templates)
+    const sizes: Record<SchematicOptions['paper'], FlatPoint> = {
+      A4: [297, 210], A3: [420, 297], A2: [594, 420], A1: [841, 594], A0: [1189, 841],
+    }
+    return inspectFrameLayout(result.resolvedFrames, sizes[this.options.paper])
+  }
   /** Write a new output pair without overwriting existing files; use a unique candidate directory.
    * @param directory Explicit output directory; created recursively when absent.
    * @returns Written paths, resolved frames and conservative power-layout warnings from the saved design. Errors may leave a partial pair.
    */
-  save(directory: string): { schematicPath: string; projectPath: string; frames: ResolvedFlatFrame[]; layoutWarnings: PowerLayoutWarning[] } {
+  save(directory: string): { schematicPath: string; projectPath: string; frames: ResolvedFlatFrame[]; layoutWarnings: PowerLayoutWarning[]; layout: ReturnType<typeof inspectFrameLayout>;grid:ReturnType<typeof inspectGrid> } {
     const result = this.render(), schematicPath = join(directory, `${this.options.projectName}.kicad_sch`), projectPath = join(directory, `${this.options.projectName}.kicad_pro`)
     if (existsSync(schematicPath) || existsSync(projectPath)) throw new Error(`output already exists: ${directory}; choose a unique candidate directory`)
     mkdirSync(directory, { recursive: true })
     writeFileSync(schematicPath, result.schematic, { flag: 'wx' })
     writeFileSync(projectPath, result.project, { flag: 'wx' })
-    return { schematicPath, projectPath, frames: result.resolvedFrames, layoutWarnings: this.powerLayoutWarnings() }
+    return { schematicPath, projectPath, frames: result.resolvedFrames, layoutWarnings: this.powerLayoutWarnings(),layout:this.layoutReport(),grid:this.gridReport() }
   }
 }

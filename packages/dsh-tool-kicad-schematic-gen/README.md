@@ -1,5 +1,7 @@
 # @local/dsh-tool-kicad-schematic-gen
 
+The builder now exports `ConnectedSchematic` and `SchematicProject`. `addComponent` combines placement with an explicit pin map (net, null for deliberate NC, or `{manual:true}` for explicit wiring); missing pins are errors. Existing `addSymbol` supports optional `dnp`, custom string `properties`, and a stable instance `key`. The project facade reuses checked hierarchy assembly and writes final-reference connection intent, not an electrical verification report. Existing APIs remain supported; footprint libraries still use the normal import workflow. See [declarative design](skills/kicad-schematic-design/references/declarative-design.md).
+
 [中文](README.zh.md)
 
 One installable plugin containing twelve tools and the kicad-schematic-design skill. Internal modules preserve the former component-library, module-catalog and schematic-tool contracts. Component search is provided by the KiCad built-in plugin @huaqiu/dsh-tool-part-search and its search_hqsch_parts tool.
@@ -12,7 +14,7 @@ Build, typecheck and test from the repository workspace. Restart the KiCad assis
 
 Paired import: `import_kicad_component({manufacturer_id, mpn, projectDir})` downloads a symbol and footprint, registers `sym-lib-table` and `fp-lib-table`, and returns `footprintId`. Place with `addSymbol({libraryPath, libId, footprint: footprintId, ...})`. Success requires both usable models and matching unique pin/pad number sets. Public tool arguments use required `manufacturer_id` and `mpn`, matching `@huaqiu/dsh-tool-part-search`; imports also accept optional `projectDir` (defaults to the workspace root). `mfgId` is retained only by the internal identity parser for legacy direct callers; schema-validated tool calls must use `manufacturer_id`. See the skill's [component and PCB reference](skills/kicad-schematic-design/references/component-pcb.md).
 
-Power symbols: declare actual shared nets with the builder's `requiredPowerSymbols` option. `powerLabelCatalog(nets)` returns current-build label UUIDs, coordinates and imported-module names for reproducible placement. `checkPowerSymbols()` and render/save reject missing symbols or unconverted labels for declared nets. Layout warnings still require visual review. See [power-symbol delivery](skills/kicad-schematic-design/references/power-symbols.md).
+Power symbols: declare actual shared nets with the builder's `requiredPowerSymbols` option. `powerLabelCatalog(nets)` returns current-build label UUIDs, coordinates and imported-module names for reproducible placement. New flat designs use `powerStyle:"mixed"` and current-build `keepLabels` UUIDs to retain selected labels. `checkPowerSymbols()` and render/save require a representation of each declared net; the legacy `symbols` policy still rejects missing symbols or unconverted labels. Layout warnings still require visual review. See [power-symbol delivery](skills/kicad-schematic-design/references/power-symbols.md).
 
 `planPowerPlacements({libraryPath, nets})` plans bounded rotations, horizontal text placement and short straight leads before conversion. Diagnostics list unresolved overlaps and unmeasured objects; visual review remains required.
 

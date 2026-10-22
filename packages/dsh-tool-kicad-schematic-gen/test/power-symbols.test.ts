@@ -25,6 +25,46 @@ const build = (requiredPowerSymbols?: Record<string, string>) => new Schematic({
   projectName: 'power_delivery', title: 'Power delivery', paper: 'A4', templateDir, requiredPowerSymbols,
 })
 
+test('power warnings identify both objects and measured ranges instead of requiring UUID lookup', async () => fixture(async (_root, library) => {
+  const sch = build()
+  sch.addSymbol({ libraryPath: library, libId: 'power:GND', reference: '#PWR1', at: [40, 40] })
+  sch.addSymbol({ libraryPath: library, libId: 'power:+3V3', reference: '#PWR2', at: [40, 40] })
+  const warning = sch.powerLayoutWarnings().find(w => w.reference === '#PWR1' && w.otherReference === '#PWR2')
+  assert.ok(warning)
+  assert.ok(warning.bounds && warning.otherBounds)
+  assert.equal(warning.measurement, 'conservative-object-bounds')
+  sch.label('GND', [40, 40])
+  const plan = sch.planPowerPlacements({ libraryPath: library, nets: { GND: 'power:GND' }, maxMoveMm: 0, clearanceMm: 3 })
+  assert.ok(plan.diagnostics.unresolved.some(u => u.obstacles.some(o => o.reference === '#PWR1')))
+}))
+
+test('mixed flat-sheet power keeps selected labels and converts other anchors without changing their names',async()=>fixture(async(root,library)=>{
+ const sch=new Schematic({projectName:'mixed',title:'mixed',paper:'A4',templateDir,
+  requiredPowerSymbols:{GND:'power:GND','+3V3':'power:+3V3'},powerStyle:'mixed'})
+ const kept=sch.label('+3V3',[20.32,20.32]),converted=sch.label('+3V3',[40.64,20.32])
+ sch.label('GND',[40.64,40.64])
+ const spec={libraryPath:library,nets:{GND:'power:GND','+3V3':'power:+3V3'},keepLabels:[kept]}
+ const plan=sch.planPowerPlacements(spec)
+ assert.equal(plan.placements[kept],undefined);assert.ok(plan.placements[converted])
+ assert.throws(()=>sch.replacePowerLabels({...spec,keepLabels:['stale']}),/current-build/)
+ assert.equal(sch.powerLabelCatalog(['+3V3']).length,2)
+ sch.replacePowerLabels({...spec,placements:plan.placements})
+ assert.deepEqual(sch.powerLabelCatalog(['+3V3']).map(l=>l.uuid),[kept])
+ const status=sch.checkPowerSymbols().find(s=>s.net==='+3V3')!
+ assert.equal(status.symbolCount,1);assert.deepEqual(status.remainingLabelUuids,[kept])
+ assert.ok(sch.render().schematic.includes('(label "+3V3"'))
+ sch.save(join(root,'mixed'))
+}))
+
+test('mixed policy still requires a representation of every declared net; strict mode rejects keepLabels',async()=>fixture(async(_root,library)=>{
+ const mixed=new Schematic({projectName:'mixed',title:'mixed',paper:'A4',templateDir,
+  requiredPowerSymbols:{GND:'power:GND','+3V3':'power:+3V3'},powerStyle:'mixed'})
+ mixed.label('+3V3',[20,20]);assert.throws(()=>mixed.checkPowerSymbols(),/GND: 0/)
+ mixed.label('GND',[20,30]);assert.doesNotThrow(()=>mixed.checkPowerSymbols())
+ const strict=build({GND:'power:GND'}),id=strict.label('GND',[20,20])
+ assert.throws(()=>strict.replacePowerLabels({libraryPath:library,nets:{GND:'power:GND'},keepLabels:[id]}),/requires powerStyle mixed/)
+}))
+
 test('fresh UUIDs are selected by current module/net/coordinates on every build', async () => fixture(async (root, library) => {
   const original = build()
   original.addSymbol({ libraryPath: library, libId: 'power:GND', reference: '#PWR1', at: [20, 20] })

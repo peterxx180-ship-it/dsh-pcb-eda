@@ -8,8 +8,11 @@ const builderPath = join(pluginDir, 'lib', 'builder.js');
 if (!existsSync(builderPath)) throw new Error('Set DSH_SCHEMATIC_PLUGIN_DIR to the installed dsh-tool-kicad-schematic-gen directory before running copied examples.');
 const builder = await import(pathToFileURL(builderPath).href);
 export const Schematic = builder.Schematic;
+export const ConnectedSchematic = builder.ConnectedSchematic;
+export const SchematicProject = builder.SchematicProject;
 export const attachPinLabel = builder.attachPinLabel;
 export const attachPinLabels = builder.attachPinLabels;
+export const snapPoint = builder.snapPoint;
 export const templateDir = join(pluginDir, 'skills', 'kicad-schematic-design', 'templates');
 let symbolDir;
 export function symbolLibrary(name) {

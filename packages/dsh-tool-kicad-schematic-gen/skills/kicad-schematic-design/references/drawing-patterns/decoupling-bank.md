@@ -4,6 +4,6 @@
 
 parts.capacitors 是含实际 value、footprint、angle、pins.top/bottom 的数组；references.capacitors 与其一一对应。默认列距 20.32 mm，长文字可增大 pitch。数量、容量、耐压和极性按设计确定，不能把示例当成通用容量组合。
 
-[代码](../../assets/drawing-patterns/decoupling-bank.mjs) · [参考图](../../assets/drawing-patterns/decoupling-bank.png)。原理图上并排不代表 PCB 上已靠近电源引脚放置。
+[代码](../../assets/drawing-patterns/circuits/decoupling-bank.mjs) · [参考图](../../assets/drawing-patterns/images/decoupling-bank.png)。原理图上并排不代表 PCB 上已靠近电源引脚放置。
 
 LDO 输入、输出电容优先按 [LDO 整体画法](ldo-fixed-on.md) 分别放在 VIN/VOUT 两侧，不把电容集中在模块下方只用同名标签连接；不同电源域不能合并为一组。

@@ -2,3 +2,5 @@
 export * from './schematic/builder.ts'
 export { resolveKiCadPaths } from './runtime-paths.ts'
 export {attachPinLabel,attachPinLabels} from './schematic/label-leads.ts'
+export {snapPoint,DEFAULT_SCHEMATIC_GRID} from './schematic/grid.ts'
+export * from './schematic/design.ts'

@@ -1,6 +1,21 @@
-# 电源符号交付
+# 电源符号与标签的混合表达
 
 随机 UUID 是对象身份，不是布局选择条件。跨次构建按网络、整页毫米坐标和导入模块名定位；在一次构建中使用 catalog 返回的 UUID 调整当前对象，不固定 UUID，也不读取构建库源码。
+
+[混合表达与接头朝向示例](../assets/drawing-patterns/images/mixed-power.png)：输入接头朝右、输出接头朝左，主要供电使用符号，局部引用保留短直标签。
+
+## 选择表达方式
+
+平铺新工程设置 powerStyle:'mixed'。主要电源入口、输出母线优先符号，局部侧向供电脚允许短线加标签；GND通常仍用向下符号。同一电源网络可混用，不为放箭头无故拐弯；层次工程不能把全局连接替换成子页局部网络。
+
+保留位置用 `keepLabels` 指定当前 UUID（可直接用 label 返回值），planPowerPlacements 与 replacePowerLabels 传入相同列表。清单外的已映射标签照常转换。全部位置都保留时也合法；主要母线使用符号是绘图偏好，不假称标签代表电气验证。未指定 powerStyle 的旧脚本仍为严格符号模式，维持兼容。
+
+```js
+const localSupply = region.label('+3V3', supplyLeadEnd);
+const spec = { libraryPath: POWER_LIB, nets: powerNets, keepLabels:[localSupply] };
+const plan = sch.planPowerPlacements(spec);
+sch.replacePowerLabels({ ...spec, placements:plan.placements });
+```
 
 ## 完整流程
 
@@ -17,7 +32,7 @@ const powerNets = { GND: 'power:GND', '+3V3': 'power:+3V3' };
 const sch = new Schematic({
   projectName: 'power_demo', title: 'Power symbols', paper: 'A4',
   templateDir,
-  requiredPowerSymbols: powerNets,
+  requiredPowerSymbols: powerNets, powerStyle: 'mixed',
 });
 sch.addSymbol({
   libraryPath: symbolLibrary('Device'),
@@ -50,7 +65,7 @@ console.log(sch.save(process.argv[2]));
 
 diagnostics 返回 plannedCount、rotatedCount、movedCount、candidateCount、unresolved（当前 UUID、网络、坐标、冲突对象 UUID）和 unmeasuredObjectUuids。拥挤时仍返回较少冲突方案并明确列出 unresolved，不声称完全无重叠。有未测量对象时也不能据此宣称布局全部检查通过。有限评分和保守边界不能替代 KiCad 电气检查或最终预览。
 
-集中检查诊断对应区域，一次修改相关 placements 后再生成；不要统一覆写所有 angle=0、不要反复渲染整页，也不要为缩短文字任意重命名网络。模型初次按自动方案生成一次，再根据明确剩余问题修正，保留原电源交付要求。
+集中检查诊断对应区域，一次修改相关 placements 后再生成；不要统一覆写所有 angle=0、不要反复渲染整页，也不要为缩短文字任意重命名网络。模型初次按自动方案生成一次，再根据明确剩余问题修正，可以将不适合转换的位置明确放入 keepLabels 后重新规划。
 
 ## 复用模块中的精确选择
 
@@ -75,8 +90,10 @@ plannedAnchor 和 plannedTextAt 来自当前设计的布局计划。网络可能
 ## 交付检查与错误处理
 
 - requiredPowerSymbols 只声明本设计实际共享的网络及精确符号 ID，不将隔离地、电源域或未使用的电源添加进去。
-- checkPowerSymbols 返回每个声明网络的 symbolCount、remainingLabelUuids。至少一个对应电源符号且没有残留局部/全局标签才通过。它检查实际缓存中的 power 定义、实例 libId 和 Value，不只统计 #PWR 引用。
-- render/save 自动执行同一检查，缺符号、漏转换或之后又加回标签时抛出 POWER_SYMBOLS_REQUIRED，失败发生在写文件之前。未声明 requiredPowerSymbols 的历史脚本保留旧行为，因此新设计必须显式声明。
-- POWER_LABEL_INVALID 若提示 placement 未选中标签，重新查询本次 catalog；不要从候选文件或上一轮日志复制 UUID，不绕过校验、不取消转换。
-- 文字重叠时改 valueAt；符号图形遮挡时调整 at/angle/via，然后重新构建并预览。不撤掉交付要求、不将全部电源换回标签。无法满足时报告具体未解决的位置。
+- checkPowerSymbols 返回每个声明网络的 symbolCount、remainingLabelUuids。mixed 模式下每个声明网络至少有真实电源符号或同名局部/全局标签；remainingLabelUuids 是保留标签而非错误。symbols 模式要求至少一个对应电源符号且无残留标签。它检查实际缓存中的 power 定义、实例 libId 和 Value，不只统计 #PWR 引用。
+- render/save 自动执行同一检查，mixed 缺少某个声明网络的任何表达，或 symbols 模式缺符号/有残留标签时抛出 POWER_SYMBOLS_REQUIRED，失败发生在写文件之前。未声明 requiredPowerSymbols 的历史脚本保留旧行为，因此新设计必须显式声明。
+- POWER_LABEL_INVALID 若提示 placement 未选中标签，重新查询本次 catalog；不要从候选文件或上一轮日志复制 UUID，keepLabels 也必须使用本轮选中网络的标签 UUID，不接受重复或失效身份。
+- 文字重叠时改 valueAt；符号图形遮挡时调整 at/angle/via，然后重新构建并预览。也可在 mixed 模式明确保留该标签，避免无意义绕行。无法满足时报告具体未解决的位置。
 - 这些检查不核对供电拓扑、电气连通性或全部图形遮挡。layoutWarnings 是提示，局部预览仍需确认；不自动加 PWR_FLAG 或运行 ERC。
+
+转换线段中间的电源标签时，replacePowerLabels 会在原锚点拆分导线并补连接点；移动符号时保留从原锚点到新位置的连线，已有有效分支不裁切。POWER_LABEL_AMBIGUOUS 表示锚点位于未标连接点的交叉线上，需明确选择接法后重试，不能自动把交叉网络短接。

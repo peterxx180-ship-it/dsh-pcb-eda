@@ -48,7 +48,7 @@ export function attachPinLabels(target:LabelTarget,spec:{
   return {pin,net,start}
  })
  const edge=sign<0?Math.min(...planned.map(p=>p.start[axis])):Math.max(...planned.map(p=>p.start[axis]))
- // 1.27 mm font: conservative character-cell width, plus an inset and pin clearance.
+ // 1.27 mm font: conservative character-cell width plus pin clearance.
  const textSpan=(net:string)=>Array.from(net).length*1.27+2.54
  const leadLength=textPosition==='overWire'?Math.max(length,...planned.map(p=>textSpan(p.net))):length
  const baseline=round(alignAt??edge+sign*leadLength)
@@ -62,7 +62,7 @@ export function attachPinLabels(target:LabelTarget,spec:{
  const items=planned.map(({pin,net,start})=>{
   const end=[...start] as FlatPoint;end[axis]=baseline
   const at=[...end] as FlatPoint
-  if(textPosition==='overWire')at[axis]=round(at[axis]-sign*Math.min(1.27,Math.abs(end[axis]-start[axis])/2))
+  // The electrical anchor is the actual endpoint; text direction supplies the inward layout.
   target.wire(start,end)
   return {pin,net,at,end,label:target.label(net,at,angles[direction])}
  })

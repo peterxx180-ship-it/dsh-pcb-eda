@@ -37,3 +37,7 @@ node <设计目录>/scripts/design.mjs <设计目录>/.candidate/<唯一run-id>
 ## 功能框内的小电路
 
 LED、按键、去耦等可组合 [局部画法](drawing-patterns.md) 到同一个功能模块，不为每条支路新建 region。其 reservedBounds 是 region 内的预留范围，与本页功能模块的 bounds 布局表不是同一字段；不能当作精确测量或自动打包结果。主入口分配位号，模块内调用各单元 place，统一 connect；跨单元通过真实 ports 或已确认网络连接。先留出属性和标签空间，再依据实际预览调整区域大小。
+
+参考库的 circuits/shared/maintenance 分类与统一注释见 [参考脚本组织](script-layout.md)，不要把维护用整页生成器复制为项目设计入口。
+
+多框首次放置后、connect 前调用 sch.layoutReport()，连同来源 autoBounds 框一起检查；坐标契约、集中修正与发布清理见 [减少生成返工](build-convergence.md)。
