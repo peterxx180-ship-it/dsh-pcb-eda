@@ -1,4 +1,4 @@
-# @local/dsh-tool-kicad-schematic-gen
+# @huaqiu/dsh-tool-kicad-schematic-gen
 
 The builder now exports `ConnectedSchematic` and `SchematicProject`. `addComponent` combines placement with an explicit pin map (net, null for deliberate NC, or `{manual:true}` for explicit wiring); missing pins are errors. Existing `addSymbol` supports optional `dnp`, custom string `properties`, and a stable instance `key`. The project facade reuses checked hierarchy assembly and writes final-reference connection intent, not an electrical verification report. Existing APIs remain supported; footprint libraries still use the normal import workflow. See [declarative design](skills/kicad-schematic-design/references/declarative-design.md).
 

@@ -81,7 +81,10 @@ export function publishablePackages() {
 
 /** Packages that are real DSH plugins (declare a `dsh` config). */
 export function dshPlugins() {
-  return discoverPackages().filter((p) => p.manifest.dsh != null)
+  // Private packages never ship, so they must not be tracked in the release
+  // manifest (`dsh-tool-kicad-schematic-gen` was promoted to a public
+  // `@huaqiu` plugin and now ships like the rest).
+  return discoverPackages().filter((p) => p.manifest.dsh != null && p.manifest.private !== true)
 }
 
 /**
