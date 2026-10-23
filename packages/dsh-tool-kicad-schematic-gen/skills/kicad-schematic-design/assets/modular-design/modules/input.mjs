@@ -1,10 +1,11 @@
 /** Place the input resistance; connect only after all modules are placed. */
-export function place({ region, parts, allocateReference, nets, bounds }) {
-  const reference = allocateReference('R');
+export function place({ region, parts, references, nets, bounds }) {
+  const reference = references.resistor;
   const { pins, ...symbol } = parts.resistor;
-  region.addSymbol({ ...symbol, reference, value: '10k', at: [40, 35] });
+  region.addSymbol({ ...symbol, reference, value: '10k', at: region.snap([40, 35]) });
   return {
     bounds,
+    localConnections: [],
     ports: { signal: { reference, pin: pins.bottom } },
     connect() {
       const top = region.pin(reference, pins.top);

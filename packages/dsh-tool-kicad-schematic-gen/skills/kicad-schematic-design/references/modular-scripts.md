@@ -1,6 +1,6 @@
 # 按功能框拆分生成脚本
 
-一个模块对应一个功能框，所有模块写入主入口创建的同一个 Schematic。模块文件是模型编写电路的组织方式；实际连接、器件和布局仍由模型设计。
+一个模块通常对应一个功能框，所有模块写入主入口创建的同一个 Schematic。并行任务可合并几个强相关框，不为每条小支路启动 agent；首轮或旧工程仍有多个模块需实质重画时，按 [分批生成](parallel-modules.md) 检查工具、冻结契约、实际派发并记录返回 ID，之后集成和定向返修。现有单文件工程先提取共享数据及受影响模块，保留已验证电路；不能只新建任务计划却继续由主 agent 编写全部模块。模块文件是模型编写电路的组织方式；实际连接、器件和布局仍由模型设计。
 
 ```text
 scripts/
@@ -14,7 +14,7 @@ scripts/
 
 ## 调用与坐标
 
-模块导出 `place({region, parts, allocateReference, nets, bounds})`，放置全部内部器件并返回 `{ports, bounds, connect}`。`ports` 使用 `{reference, pin}` 表示真实实例引脚；不猜测端口坐标。`connect()` 只负责内部布线、标签和标记。主入口先完成所有 place，再调用所有 connect，最后用 sch.pin / sch.wire 全局坐标连接模块。模块内部用 region.pin / region.wire 相对坐标；不要混用全局点和局部点。
+新模块导出 `place({region, parts, references, nets, bounds})`，放置全部内部器件并返回 `{ports, bounds, localConnections, connect}`。references 是主入口预分配的角色位号表；旧模块的 allocateReference 可继续在主入口统一分配，子 agent 不自行新建分配器。`ports` 使用 `{reference, pin}` 表示真实实例引脚；不猜测端口坐标。localConnections 列出应有直接导线通路的引脚对（无此类通路时为空数组）。`connect()` 只负责内部布线、标签和标记。主入口先完成所有 place，再调用所有 connect，最后用 sch.pin / sch.wire 全局坐标连接模块。模块内部用 region.pin / region.wire 相对坐标；不要混用全局点和局部点。
 
 主入口预建 region，名称、说明、origin、size 集中放在布局表。bounds 返回同一布局表中的 origin/size，表示预留区域，不重新扫描电路计算包围框。改变某个 origin 并重跑可以整体移动该框及内部电路。使用明确网络标签时，主入口给两端传入同一网络名；同页局部标签也会互连，内部网络必须用模块前缀避免意外合并。跨区导线在主入口显式规划正交折点。
 
@@ -22,7 +22,7 @@ scripts/
 
 ## 可运行范例
 
-复制 [modular-design](../assets/modular-design/design.mjs) 所在整个目录到项目的 scripts/。范例含两个电阻功能框，展示统一引用、分两阶段生成、模块端口和主入口跨区连线。它是接口示例，实际工程须替换器件、网络和布局。范例采用本机 Device:R 与现有 builder.js，不需要新增模型工具。
+复制 [modular-design](../assets/modular-design/design.mjs) 所在整个目录到项目的 scripts/，将 module-plan.json 移到设计目录根部；按 runtime.mjs 的安装路径约定调整其导入路径。范例含两个电阻功能框，展示冻结位号/布局、分两阶段生成、模块端口和主入口跨区连线。它是接口示例，实际工程须替换器件、网络和布局；先完成真实项目核实再设置 interfacesFrozen:true。范例采用本机 Device:R 与现有 builder.js，不需要新增模型工具。
 
 ```powershell
 node <设计目录>/scripts/design.mjs <设计目录>/.candidate/<唯一run-id>

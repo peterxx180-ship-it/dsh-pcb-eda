@@ -2,7 +2,7 @@
 
 多功能区域设计先读 [模块脚本参考](modular-scripts.md)：每个框编写独立模块，统一放置完成后布线，由一个主入口保存整张原理图。下面的单电阻示例用于最小接口演示。
 
-脚本使用普通 ESM JavaScript，保存为 `.mjs`。在 Harness 的 shell 工具中用可用的 Node 执行 `node <项目内脚本绝对路径>`。构建库通过当前 skill 末尾提供的安装目录加载；运行项目前设置 `DSH_SCHEMATIC_PLUGIN_DIR`，标准符号库设置 `KICAD_SYMBOL_DIR`（路径同样由 skill 提供）。配置与输出目录由脚本明确传入。下面是可运行的电阻示例，实际设计须替换器件和连接。
+脚本使用普通 ESM JavaScript，保存为 `.mjs`。在 Harness 的 shell 工具中用可用的 Node 执行 `node <项目内脚本绝对路径>`。构建库通过当前 skill 末尾提供的安装目录加载；运行项目前设置 `DSH_SCHEMATIC_PLUGIN_DIR`，标准符号库设置 `KICAD_SYMBOL_DIR`（路径同样由 skill 提供）。配置与输出目录由脚本明确传入。下面的单电阻只演示 API，不是功能电路模板；不能复制其两端标签模式到每个器件。真实模块先按 [局部连线与验收](local-circuit-layout.md) 完成拓扑及直接布线，再为边界信号添加标签。
 
 ```javascript
 import { join } from 'node:path';
@@ -48,7 +48,7 @@ console.log(JSON.stringify(sch.save(outputDirectory)));
 
 ### 信号标签引出与对齐
 
-同侧信号优先批量排列，见 [左右/上下标签参考](drawing-patterns/label-alignment.md)。从 runtime.mjs 或 builder 导入：
+仅对已规划的电路边界信号批量排列，见 [左右/上下标签参考](drawing-patterns/label-alignment.md)。pins 来自边界清单，不从全部引脚自动生成；内部外围连接先用 wire 完成。从 runtime.mjs 或 builder 导入：
 
 ```javascript
 const {items, warnings} = attachPinLabels(region, {

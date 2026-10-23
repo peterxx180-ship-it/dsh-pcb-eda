@@ -1,5 +1,7 @@
 /** One entry point combines independently authored modules into one editable sheet. */
-import { isAbsolute } from 'node:path';
+import { isAbsolute, resolve } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { Schematic, templateDir, symbolLibrary } from '../runtime.mjs';
 import { parts } from './shared/parts.mjs';
 import { place as placeInput } from './modules/input.mjs';
@@ -13,28 +15,41 @@ const sch = new Schematic({
   projectName: 'modular_demo', title: 'Modular script example', paper: 'A4',
   templateDir,
 });
+// Optional plan argument lets this fixture run in place or after copying to a project.
+const fixturePlan = fileURLToPath(new URL('./module-plan.json', import.meta.url));
+const planPath = process.argv[3] ?? (existsSync(fixturePlan) ? fixturePlan
+  : fileURLToPath(new URL('../module-plan.json', import.meta.url)));
+const plan = JSON.parse(readFileSync(resolve(planPath), 'utf8'));
+if (plan.interfacesFrozen !== true) throw new Error('Freeze verified module interfaces before building');
+const specs = Object.fromEntries(plan.modules.map(module => [module.id, module]));
 const layout = {
-  input: { name: 'Input', description: 'Input resistor', origin: [25, 25], size: [80, 80] },
-  output: { name: 'Output', description: 'Output resistor', origin: [120, 25], size: [80, 80] },
+  input: { name: 'Input', description: 'Input resistor', ...specs.input.layout },
+  output: { name: 'Output', description: 'Output resistor', ...specs.output.layout },
 };
 const regions = Object.fromEntries(Object.entries(layout).map(([key, spec]) => [key, sch.region(spec)]));
-const counts = new Map();
-const allocateReference = prefix => {
-  const number = (counts.get(prefix) ?? 0) + 1;
-  counts.set(prefix, number);
-  return `${prefix}${number}`;
-};
-const input = placeInput({ region: regions.input, parts, allocateReference,
+const input = placeInput({ region: regions.input, parts, references: specs.input.references,
   nets: { supply: '+3V3' }, bounds: layout.input });
-const output = placeOutput({ region: regions.output, parts, allocateReference,
+const output = placeOutput({ region: regions.output, parts, references: specs.output.references,
   nets: { ground: 'GND' }, bounds: layout.output });
+for (const [id, module] of Object.entries({ input, output })) {
+  if (JSON.stringify(module.ports) !== JSON.stringify(specs[id].ports)) {
+    throw new Error(`Module port differs from frozen plan: ${id}`);
+  }
+}
+const layoutReport = sch.layoutReport();
+if (layoutReport.total) throw new Error(JSON.stringify(layoutReport));
 for (const module of [input, output]) module.connect();
 
 // Cross-region routes use global pin positions and an explicit routing channel.
 const a = sch.pin(input.ports.signal.reference, input.ports.signal.pin);
 const b = sch.pin(output.ports.signal.reference, output.ports.signal.pin);
-sch.wire(a, b, [[110, a[1]], [110, b[1]]]);
+sch.wire(a, b, [[110.49, a[1]], [110.49, b[1]]]);
 sch.label('SIGNAL', a);
+const localReport = sch.localConnectionsReport([
+  ...input.localConnections, ...output.localConnections,
+  { name: 'cross-region signal', from: input.ports.signal, to: output.ports.signal },
+]);
+if (localReport.failed) throw new Error(JSON.stringify(localReport));
 sch.replacePowerLabels({
   libraryPath: symbolLibrary('power'),
   nets: { '+3V3': 'power:+3V3', GND: 'power:GND' },

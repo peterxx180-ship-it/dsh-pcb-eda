@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "maxConcurrent": 3,
+  "interfacesFrozen": true,
+  "modules": [
+    {
+      "id": "input",
+      "files": ["scripts/modules/input.mjs"],
+      "dependsOn": [],
+      "usesInterfaces": ["output"],
+      "references": { "resistor": "R1" },
+      "ports": { "signal": { "reference": "R1", "pin": "2" } },
+      "layout": { "origin": [25.4, 25.4], "size": [80.01, 80.01] },
+      "status": "pending"
+    },
+    {
+      "id": "output",
+      "files": ["scripts/modules/output.mjs"],
+      "dependsOn": [],
+      "usesInterfaces": ["input"],
+      "references": { "resistor": "R2" },
+      "ports": { "signal": { "reference": "R2", "pin": "1" } },
+      "layout": { "origin": [120.65, 25.4], "size": [80.01, 80.01] },
+      "status": "pending"
+    }
+  ]
+}

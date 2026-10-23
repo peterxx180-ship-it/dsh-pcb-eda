@@ -1,10 +1,11 @@
-/** Place the output resistance in its own region with a shared reference allocator. */
-export function place({ region, parts, allocateReference, nets, bounds }) {
-  const reference = allocateReference('R');
+/** Use a frozen role reference; the child never allocates shared designators. */
+export function place({ region, parts, references, nets, bounds }) {
+  const reference = references.resistor;
   const { pins, ...symbol } = parts.resistor;
-  region.addSymbol({ ...symbol, reference, value: '10k', at: [40, 35] });
+  region.addSymbol({ ...symbol, reference, value: '10k', at: region.snap([40, 35]) });
   return {
     bounds,
+    localConnections: [],
     ports: { signal: { reference, pin: pins.top } },
     connect() {
       const bottom = region.pin(reference, pins.bottom);
